@@ -49,6 +49,7 @@ def generate_periodic_signal(
     func: Callable[[np.ndarray], np.ndarray],
     a: float,
     freq_mod: Optional[float] = None,
+    phase: float = 0.0,
 ):
     """Generates a periodic signal based on the base signal (should already contain the frequency) and applying the
     supplied mathematical function. ``freq_mod`` can be used to modulate the signal amplitude with another frequency.
@@ -63,13 +64,16 @@ def generate_periodic_signal(
         amplitude of the desired signal
     freq_mod : Optional[float]
         optional frequency modulation as a factor of the base frequency
+    phase : float
+        phase offset (in radians) applied to the base argument.
     Returns
     -------
     time series : np.ndarray
         Time series containing the signal (applying func on base) with amplitude ``a``.
     """
+    shifted_base = base + float(phase)
     ts: np.ndarray = np.array(a)
     if freq_mod:
-        ts = func(base * freq_mod) * ts
+        ts = func(shifted_base * freq_mod) * ts
 
-    return func(base) * ts
+    return func(shifted_base) * ts

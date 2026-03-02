@@ -37,6 +37,7 @@ class Square(BaseOscillationInterface):
         amplitude: Optional[float] = None,
         freq_mod: Optional[float] = None,
         duty: Optional[float] = None,
+        phase: Optional[float] = None,
         *args,
         **kwargs,
     ) -> np.ndarray:
@@ -45,8 +46,9 @@ class Square(BaseOscillationInterface):
         a: float = amplitude or self.amplitude
         v_freq_mod: float = freq_mod or self.freq_mod  # factor of f
         v_duty: float = duty or self.duty
+        v_phase: float = phase or 0.0
 
-        return square(n, f, a, v_freq_mod, v_duty)
+        return square(n, f, a, v_freq_mod, v_duty, v_phase)
 
 
 def square(
@@ -55,10 +57,11 @@ def square(
     amplitude: float = default_values[BASE_OSCILLATIONS][PARAMETERS.AMPLITUDE],
     freq_mod: float = default_values[BASE_OSCILLATIONS][PARAMETERS.FREQ_MOD],
     duty: float = default_values[BASE_OSCILLATIONS][PARAMETERS.DUTY],
+    phase: float = 0.0,
 ) -> np.ndarray:
     base_ts = prepare_base_signal(length, frequency)
     func = partial(signal.square, duty=duty)
-    return generate_periodic_signal(base_ts, func, amplitude, freq_mod)
+    return generate_periodic_signal(base_ts, func, amplitude, freq_mod, phase)
 
 
 BaseOscillation.register(Square.KIND, Square)

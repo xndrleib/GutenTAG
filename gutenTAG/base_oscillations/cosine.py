@@ -34,6 +34,7 @@ class Cosine(BaseOscillationInterface):
         frequency: Optional[float] = None,
         amplitude: Optional[float] = None,
         freq_mod: Optional[float] = None,
+        phase: Optional[float] = None,
         *args,
         **kwargs,
     ) -> np.ndarray:
@@ -41,7 +42,8 @@ class Cosine(BaseOscillationInterface):
         f: float = frequency or self.frequency  # in Hz
         a: float = amplitude or self.amplitude
         v_freq_mod: float = freq_mod or self.freq_mod  # factor of f
-        return cosine(n, f, a, v_freq_mod)
+        v_phase: float = phase or 0.0
+        return cosine(n, f, a, v_freq_mod, v_phase)
 
 
 def cosine(
@@ -49,9 +51,10 @@ def cosine(
     frequency: float = default_values[BASE_OSCILLATIONS][PARAMETERS.FREQUENCY],
     amplitude: float = default_values[BASE_OSCILLATIONS][PARAMETERS.AMPLITUDE],
     freq_mod: float = default_values[BASE_OSCILLATIONS][PARAMETERS.FREQ_MOD],
+    phase: float = 0.0,
 ) -> np.ndarray:
     base_ts = prepare_base_signal(length, frequency)
-    return generate_periodic_signal(base_ts, np.cos, amplitude, freq_mod)
+    return generate_periodic_signal(base_ts, np.cos, amplitude, freq_mod, phase)
 
 
 BaseOscillation.register(Cosine.KIND, Cosine)

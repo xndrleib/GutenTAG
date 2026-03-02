@@ -1,0 +1,184 @@
+generator:
+  output_root: data/ts_dataset_generated_segment_random_extremum_v3_amp-split
+  master_seed: 4242
+  overwrite_output: true
+  log_level: INFO
+  on_variant_failure: skip
+
+dataset:
+  length: 10000
+  channels: 5
+  splits: [train, val, test]
+  instances_per_split: 5
+
+anomaly_policy:
+  density_range: [0.05, 0.10]
+  density_tolerance: 0.002
+  segment_count_range: [20, 50]
+  placement_policy: uniform
+  channel_policy: single-random
+  overlap_policy: global
+  length_normalization: resample
+  max_placement_attempts: 2500
+  skip_density_incompatible_variants: true
+  segment_planner:
+    default:
+      planner: uniform_segments
+    extremum:
+      planner: point_events_from_density
+      density_range: [0.05, 0.10]
+      unique_timestamps: true
+  special_anomaly_policies: {}
+  min_segment_length_by_anomaly:
+    amplitude: 5
+    pattern: 5
+    pattern-shift: 5
+    trend: 5
+
+variants:
+  base_oscillations: []
+  anomaly_types: []
+  skip_base_oscillations:
+    - custom-input
+    - formula
+  skip_anomaly_types: []
+  disabled_anomaly_types: []
+  profiles_per_pair: 1
+  pair_profiles:
+    cosine__frequency: [p01]
+    dirichlet__frequency: [p01]
+    ecg__frequency: [p01]
+    sawtooth__frequency: [p01]
+    sine__frequency: [p01]
+    square__frequency: [p01]
+  base_parameter_policy: fixed_per_variant
+  anomaly_parameter_policy: random_per_segment
+  base_oscillation_overrides: {}
+  anomaly_overrides:
+    amplitude:
+      amplitude_factor:
+        distribution: choice
+        values:
+          - distribution: uniform
+            low: 0.5
+            high: 0.9
+          - distribution: uniform
+            low: 1.1
+            high: 2.0
+    mean:
+      offset:
+        distribution: choice
+        values:
+          - distribution: uniform
+            low: -1.5
+            high: -0.3
+          - distribution: uniform
+            low: 0.3
+            high: 1.5
+    variance:
+      variance:
+        distribution: uniform
+        low: 0.05
+        high: 0.25
+    frequency:
+      frequency_factor:
+        distribution: uniform
+        low: 0.7
+        high: 1.6
+    platform:
+      value:
+        distribution: uniform
+        low: -1.5
+        high: 1.5
+    pattern:
+      sinusoid_k:
+        distribution: uniform
+        low: 1.0
+        high: 30.0
+      square_duty:
+        distribution: uniform
+        low: 0.15
+        high: 0.85
+      sawtooth_width:
+        distribution: uniform
+        low: 0.15
+        high: 0.85
+      cbf_pattern_factor:
+        distribution: uniform
+        low: 0.6
+        high: 2.5
+    pattern-shift:
+      transition_window:
+        distribution: int_uniform
+        low: 5
+        high: 25
+      shift_by:
+        distribution: int_uniform
+        low: -25
+        high: 25
+    trend:
+      oscillation:
+        distribution: choice
+        values:
+          - kind: random-walk
+            smoothing:
+              distribution: uniform
+              low: 0.005
+              high: 0.05
+            amplitude:
+              distribution: uniform
+              low: 0.2
+              high: 1.0
+          - kind: sine
+            frequency:
+              distribution: uniform
+              low: 0.1
+              high: 0.8
+            amplitude:
+              distribution: uniform
+              low: 0.2
+              high: 1.0
+    extremum:
+      min:
+        distribution: bernoulli
+        p: 0.5
+      local:
+        distribution: bernoulli
+        p: 0.5
+      context_window:
+        distribution: int_uniform
+        low: 20
+        high: 200
+    mode-correlation: {}
+  variant_overrides:
+    cosine__frequency:
+      anomaly_policy: &period_locked_frequency_policy
+        segment_count_range: [8, 22]
+        segment_planner:
+          planner: period_locked_frequency
+          periods_per_segment_range: [3, 6]
+          align_to_period_start: true
+          period_ratio_offsets: [-2, -1, 1, 2]
+          frequency_factor_bounds: [0.7, 1.6]
+    dirichlet__frequency:
+      anomaly_policy: *period_locked_frequency_policy
+    ecg__frequency:
+      anomaly_policy: *period_locked_frequency_policy
+    sawtooth__frequency:
+      anomaly_policy: *period_locked_frequency_policy
+    sine__frequency:
+      anomaly_policy: *period_locked_frequency_policy
+    square__frequency:
+      anomaly_policy: *period_locked_frequency_policy
+
+plot:
+  enabled: true
+  dpi: 140
+  zoom_count: 5
+  zoom_margin: 100
+  zoom_margin_min: 100
+  zoom_margin_alpha: 0.0
+  zoom_fill_policy: repeat
+
+io:
+  csv_float_format: "%.8f"

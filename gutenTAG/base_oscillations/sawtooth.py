@@ -37,6 +37,7 @@ class Sawtooth(BaseOscillationInterface):
         amplitude: Optional[float] = None,
         freq_mod: Optional[float] = None,
         width: Optional[float] = None,
+        phase: Optional[float] = None,
         *args,
         **kwargs,
     ) -> np.ndarray:
@@ -45,8 +46,9 @@ class Sawtooth(BaseOscillationInterface):
         a: float = amplitude or self.amplitude
         v_freq_mod: float = freq_mod or self.freq_mod  # factor of f
         v_width: float = width or self.width
+        v_phase: float = phase or 0.0
 
-        return sawtooth(n, f, a, v_freq_mod, v_width)
+        return sawtooth(n, f, a, v_freq_mod, v_width, v_phase)
 
 
 def sawtooth(
@@ -55,10 +57,11 @@ def sawtooth(
     amplitude: float = default_values[BASE_OSCILLATIONS][PARAMETERS.AMPLITUDE],
     freq_mod: float = default_values[BASE_OSCILLATIONS][PARAMETERS.FREQ_MOD],
     width: float = default_values[BASE_OSCILLATIONS][PARAMETERS.WIDTH],
+    phase: float = 0.0,
 ) -> np.ndarray:
     base_ts = prepare_base_signal(length, frequency)
     func = partial(signal.sawtooth, width=width)
-    return generate_periodic_signal(base_ts, func, amplitude, freq_mod)
+    return generate_periodic_signal(base_ts, func, amplitude, freq_mod, phase)
 
 
 BaseOscillation.register(Sawtooth.KIND, Sawtooth)

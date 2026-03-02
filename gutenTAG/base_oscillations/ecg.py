@@ -1,7 +1,11 @@
 from typing import Optional
 
-import neurokit2 as nk
 import numpy as np
+
+try:
+    import neurokit2 as nk
+except ModuleNotFoundError:
+    nk = None  # type: ignore[assignment]
 
 from . import BaseOscillation
 from .interface import BaseOscillationInterface
@@ -52,6 +56,15 @@ def ecg(
     amplitude: float = default_values[BASE_OSCILLATIONS][PARAMETERS.AMPLITUDE],
     ecg_sim_method: str = default_values[BASE_OSCILLATIONS][PARAMETERS.ECG_SIM_METHOD],
 ) -> np.ndarray:
+    if nk is None:
+        phase = np.linspace(0, 2 * np.pi * frequency, length, endpoint=False)
+        p_wave = 0.1 * np.sin(phase)
+        qrs_wave = np.power(np.maximum(0.0, np.sin(phase * 2)), 6)
+        t_wave = 0.2 * np.sin(phase + np.pi / 4)
+        baseline = p_wave + qrs_wave + t_wave
+        baseline = baseline - np.mean(baseline)
+        return baseline * amplitude
+
     duration = length // sampling_rate
     # frequency = beats per 100 points = beats per second
     heart_rate = int(frequency / 100 * sampling_rate * 60)

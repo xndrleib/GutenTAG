@@ -53,6 +53,8 @@ def random_walk(
 ) -> np.ndarray:
     if smoothing:
         filter_size = int(smoothing * length)
+        if filter_size < 1:
+            filter_size = 1
         ts = _gen_steps(rng, length + filter_size - 1)
         gaussian = norm.pdf(np.linspace(-1.5, 1.5, filter_size))
         ts_filter = gaussian / gaussian.sum()

@@ -1,13 +1,17 @@
 import os
 from typing import List, Dict, Optional, Any, Callable, Union
 
-import git
 import numpy as np
 import yaml
 
+try:
+    import git
+except ModuleNotFoundError:
+    git = None  # type: ignore[assignment]
+
 
 class DictSanitizer:
-    NUMPY_TYPES = tuple(list(np._core._type_aliases.allTypes.values()) + [np.ndarray])  # type: ignore # mypy does not find allTypes
+    NUMPY_TYPES = (np.generic, np.ndarray)
 
     def sanitize(self, obj: Dict) -> Dict:
         for key, value in obj.items():
@@ -73,12 +77,13 @@ class Overview:
         self.seed: Optional[int] = None
         self.git_commit_sha: Optional[str] = None
 
-        try:
-            self.git_commit_sha = git.Repo(
-                search_parent_directories=True
-            ).head.object.hexsha
-        except git.InvalidGitRepositoryError:
-            pass
+        if git is not None:
+            try:
+                self.git_commit_sha = git.Repo(
+                    search_parent_directories=True
+                ).head.object.hexsha
+            except git.InvalidGitRepositoryError:
+                pass
 
     def add_seed(self, seed: Optional[int]) -> None:
         self.seed = seed

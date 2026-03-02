@@ -28,23 +28,42 @@ class AnomalyPatternShift(BaseAnomaly):
             base = anomaly_protocol.base_oscillation
 
             subsequence = base.timeseries[anomaly_protocol.start : anomaly_protocol.end]
-            transition_start = np.interp(
-                np.linspace(
-                    0, self.transition_window, self.transition_window + self.shift_by
-                ),
-                np.arange(self.transition_window),
-                subsequence[: self.transition_window],
+            length = subsequence.shape[0]
+            if length <= 1:
+                anomaly_protocol.subsequences.append(subsequence)
+                return anomaly_protocol
+
+            transition_window = min(self.transition_window, max(1, length // 2))
+            shift_by = int(
+                np.clip(self.shift_by, -transition_window, transition_window)
             )
-            shifted = subsequence[self.transition_window : -self.transition_window]
+
+            if transition_window <= 1 or length <= 2 * transition_window:
+                anomaly_protocol.subsequences.append(np.roll(subsequence, shift_by))
+                return anomaly_protocol
+
+            transition_start_num = max(1, transition_window + shift_by)
+            transition_end_num = max(1, transition_window - shift_by)
+
+            transition_start = np.interp(
+                np.linspace(0, transition_window, transition_start_num),
+                np.arange(transition_window),
+                subsequence[:transition_window],
+            )
+            shifted = subsequence[transition_window:-transition_window]
             transition_end = np.interp(
-                np.linspace(
-                    0, self.transition_window, self.transition_window - self.shift_by
-                ),
-                np.arange(self.transition_window),
-                subsequence[-self.transition_window :],
+                np.linspace(0, transition_window, transition_end_num),
+                np.arange(transition_window),
+                subsequence[-transition_window:],
             )
 
             subsequence = np.concatenate([transition_start, shifted, transition_end])
+            if subsequence.shape[0] > length:
+                subsequence = subsequence[:length]
+            elif subsequence.shape[0] < length:
+                subsequence = np.pad(
+                    subsequence, (0, length - subsequence.shape[0]), mode="edge"
+                )
 
             anomaly_protocol.subsequences.append(subsequence)
         else:

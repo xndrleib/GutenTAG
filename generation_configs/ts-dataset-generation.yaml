@@ -1,0 +1,73 @@
+generator:
+  output_root: data/ts_dataset_generated
+  master_seed: 4242
+  overwrite_output: true
+  log_level: INFO
+  on_variant_failure: skip
+
+dataset:
+  length: 10000
+  channels: 5
+  splits: [train, val, test]
+  instances_per_split: 5
+
+anomaly_policy:
+  density_range: [0.05, 0.10]
+  density_tolerance: 0.002
+  segment_count_range: [20, 50]
+  placement_policy: uniform
+  channel_policy: single-random
+  overlap_policy: global
+  length_normalization: resample
+  max_placement_attempts: 2500
+  skip_density_incompatible_variants: true
+  # Special planners are optional and keyed by anomaly type.
+  # special_anomaly_policies:
+  #   extremum:
+  #     segment_count_range: [500, 1000]
+  #     min_segment_length: 1
+  special_anomaly_policies: {}
+  min_segment_length_by_anomaly:
+    amplitude: 5
+    pattern: 5
+    pattern-shift: 5
+    trend: 5
+
+variants:
+  # Empty means: use all registered kinds except skipped/disabled ones.
+  base_oscillations: []
+  anomaly_types: []
+  skip_base_oscillations:
+    - custom-input
+    - formula
+  skip_anomaly_types: []
+  # If no special planner is configured, keep structurally hard types disabled.
+  disabled_anomaly_types:
+    - extremum
+  profiles_per_pair: 1
+  # Optional explicit profile IDs for specific pair_ids.
+  # pair_profiles:
+  #   sine__mean: [p00, p01]
+  pair_profiles: {}
+  base_parameter_policy: fixed_per_variant
+  anomaly_parameter_policy: random_per_segment
+  base_oscillation_overrides: {}
+  anomaly_overrides: {}
+  # Override precedence:
+  # 1) defaults in code
+  # 2) type-level overrides above
+  # 3) pair override key: "<base>__<anomaly>"
+  # 4) exact variant override key: "<base>__<anomaly>__pXX"
+  variant_overrides: {}
+
+plot:
+  enabled: true
+  dpi: 140
+  zoom_count: 5
+  zoom_margin: 100
+  zoom_margin_min: 100
+  zoom_margin_alpha: 0.0
+  zoom_fill_policy: repeat
+
+io:
+  csv_float_format: "%.8f"
