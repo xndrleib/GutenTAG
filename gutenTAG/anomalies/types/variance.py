@@ -11,12 +11,14 @@ from ...base_oscillations import CylinderBellFunnel, RandomModeJump
 @dataclass
 class AnomalyVarianceParameters:
     variance: float = 0.0
+    min_effect_delta: float = 0.0
 
 
 class AnomalyVariance(BaseAnomaly):
     def __init__(self, parameters: AnomalyVarianceParameters):
         super().__init__()
         self.variance = parameters.variance
+        self.min_effect_delta = max(0.0, float(parameters.min_effect_delta))
 
     def generate(self, anomaly_protocol: AnomalyProtocol) -> AnomalyProtocol:
         base = anomaly_protocol.base_oscillation
@@ -55,12 +57,33 @@ class AnomalyVariance(BaseAnomaly):
                 base.noise[anomaly_protocol.start : anomaly_protocol.end] = 0.0
                 return anomaly_protocol
 
+            original_noise = np.array(
+                base.noise[anomaly_protocol.start : anomaly_protocol.end], copy=True
+            )
             subsequence_noise = base.generate_noise(
                 anomaly_protocol.ctx.to_bo(), target_std, length
             )
-            base.noise[anomaly_protocol.start : anomaly_protocol.end] = (
+            candidate_noise = (
                 subsequence_noise * (std_schedule / target_std)
             )
+            if self.min_effect_delta > 0.0:
+                # Ensure a minimal absolute perturbation within the source window
+                # without resampling: scale the already generated delta from the
+                # original noise.
+                delta = candidate_noise - original_noise
+                max_abs_delta = float(np.max(np.abs(delta))) if delta.size > 0 else 0.0
+                if max_abs_delta < self.min_effect_delta:
+                    if max_abs_delta > 1e-12:
+                        scale = float(self.min_effect_delta / max_abs_delta)
+                        candidate_noise = original_noise + delta * scale
+                    else:
+                        fallback = np.zeros_like(candidate_noise, dtype=np.float64)
+                        if fallback.size > 0:
+                            center = fallback.size // 2
+                            sign = -1.0 if anomaly_protocol.rng.random() < 0.5 else 1.0
+                            fallback[center] = sign * self.min_effect_delta
+                        candidate_noise = original_noise + fallback
+            base.noise[anomaly_protocol.start : anomaly_protocol.end] = candidate_noise
         return anomaly_protocol
 
     @property

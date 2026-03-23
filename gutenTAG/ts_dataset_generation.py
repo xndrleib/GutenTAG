@@ -14,6 +14,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
@@ -138,6 +139,18 @@ class TSGeneratorConfig:
         Anomaly types removed from generation.
     base_oscillation_overrides : Dict[str, Dict[str, Any]]
         Per-base parameter overrides.
+    base_channel_parameter_policy : str
+        Per-channel base-parameter sampling policy. Supported values:
+        ``"fixed_per_variant"`` and ``"random_per_instance"``.
+    base_channel_overrides : Dict[str, Dict[str, Any]]
+        Per-base parameter overrides sampled independently for each channel.
+        Realized channel values overwrite shared base parameters.
+    base_channel_correlation : Dict[str, Any]
+        Channel-correlation controls for base generation. Currently supports
+        ``shared_noise_weight``.
+    split_phase_shift : Dict[str, Any]
+        Optional deterministic phase offsets applied per split to channel base
+        parameters that contain ``phase``.
     anomaly_overrides : Dict[str, Dict[str, Any]]
         Per-anomaly parameter overrides.
     variant_overrides : Dict[str, Dict[str, Any]]
@@ -156,6 +169,19 @@ class TSGeneratorConfig:
         Maximum attempts to place each segment without overlap.
     skip_density_incompatible_variants : bool
         Skip variants known to violate density constraints under current policy.
+    support_label_mode : str
+        Labeling strategy for event support. ``"strict_segment"`` marks the full
+        planned segment. ``"effective_support"`` shrinks labels to points where
+        ``|x_anom - x_clean|`` exceeds an event-specific epsilon.
+    support_eps_mode : str
+        Epsilon mode for ``effective_support``. Supported values:
+        ``"relative"`` and ``"absolute"``.
+    support_eps_value : float
+        Relative multiplier (``relative`` mode) or absolute threshold
+        (``absolute`` mode) used to determine effective support.
+    min_effective_label_length_non_extremum : int
+        Minimum label length enforced for non-point anomaly types when
+        ``support_label_mode="effective_support"``.
     """
 
     output_root: Path
@@ -177,7 +203,11 @@ class TSGeneratorConfig:
     disabled_anomaly_types: List[str] = field(default_factory=list)
     profiles_per_pair: int = DEFAULT_PROFILES_PER_PAIR
     pair_profiles: Dict[str, List[str]] = field(default_factory=dict)
-    base_parameter_policy: str = "fixed_per_variant"
+    base_parameter_policy: str = "random_per_instance"
+    base_channel_parameter_policy: str = "random_per_instance"
+    base_channel_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    base_channel_correlation: Dict[str, Any] = field(default_factory=dict)
+    split_phase_shift: Dict[str, Any] = field(default_factory=dict)
     anomaly_parameter_policy: str = "fixed_per_variant"
     base_oscillation_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     anomaly_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -199,6 +229,10 @@ class TSGeneratorConfig:
     max_placement_attempts: int = 2_500
     skip_density_incompatible_variants: bool = True
     on_variant_failure: str = "skip"
+    support_label_mode: str = "strict_segment"
+    support_eps_mode: str = "relative"
+    support_eps_value: float = 0.05
+    min_effective_label_length_non_extremum: int = 1
 
     @classmethod
     def from_dict(cls, config: Mapping[str, Any]) -> TSGeneratorConfig:
@@ -244,6 +278,22 @@ class TSGeneratorConfig:
             config.get("anomaly_overrides", {}),
             variants_cfg.get("anomaly_overrides", {}),
         )
+        merged_base_channel_overrides = _merge_dicts(
+            config.get("base_channel_overrides", {}),
+            variants_cfg.get("base_channel_overrides", {}),
+        )
+        raw_base_channel_correlation = variants_cfg.get(
+            "base_channel_correlation",
+            config.get("base_channel_correlation", {}),
+        )
+        if not isinstance(raw_base_channel_correlation, Mapping):
+            raw_base_channel_correlation = {}
+        raw_split_phase_shift = variants_cfg.get(
+            "split_phase_shift",
+            config.get("split_phase_shift", {}),
+        )
+        if not isinstance(raw_split_phase_shift, Mapping):
+            raw_split_phase_shift = {}
         pair_profiles = _parse_pair_profiles(
             variants_cfg.get("pair_profiles", config.get("pair_profiles", {}))
         )
@@ -337,9 +387,18 @@ class TSGeneratorConfig:
             base_parameter_policy=str(
                 variants_cfg.get(
                     "base_parameter_policy",
-                    config.get("base_parameter_policy", "fixed_per_variant"),
+                    config.get("base_parameter_policy", "random_per_instance"),
                 )
             ),
+            base_channel_parameter_policy=str(
+                variants_cfg.get(
+                    "base_channel_parameter_policy",
+                    config.get("base_channel_parameter_policy", "random_per_instance"),
+                )
+            ),
+            base_channel_overrides=merged_base_channel_overrides,
+            base_channel_correlation=copy.deepcopy(dict(raw_base_channel_correlation)),
+            split_phase_shift=copy.deepcopy(dict(raw_split_phase_shift)),
             anomaly_parameter_policy=str(
                 variants_cfg.get(
                     "anomaly_parameter_policy",
@@ -422,6 +481,30 @@ class TSGeneratorConfig:
                     config.get("skip_density_incompatible_variants", True),
                 )
             ),
+            support_label_mode=str(
+                anomaly_cfg.get(
+                    "support_label_mode",
+                    config.get("support_label_mode", "strict_segment"),
+                )
+            ),
+            support_eps_mode=str(
+                anomaly_cfg.get(
+                    "support_eps_mode",
+                    config.get("support_eps_mode", "relative"),
+                )
+            ),
+            support_eps_value=float(
+                anomaly_cfg.get(
+                    "support_eps_value",
+                    config.get("support_eps_value", 0.05),
+                )
+            ),
+            min_effective_label_length_non_extremum=int(
+                anomaly_cfg.get(
+                    "min_effective_label_length_non_extremum",
+                    config.get("min_effective_label_length_non_extremum", 1),
+                )
+            ),
         )
         ts_config.validate()
         return ts_config
@@ -484,6 +567,49 @@ class TSGeneratorConfig:
                 "anomaly_parameter_policy must be one of "
                 "{'fixed_per_variant','random_per_instance','random_per_segment'}"
             )
+        if self.base_channel_parameter_policy not in (
+            "fixed_per_variant",
+            "random_per_instance",
+        ):
+            raise ValueError(
+                "base_channel_parameter_policy must be one of "
+                "{'fixed_per_variant','random_per_instance'}"
+            )
+        if not isinstance(self.base_channel_correlation, Mapping):
+            raise ValueError("base_channel_correlation must be a mapping")
+        shared_noise_weight = float(
+            dict(self.base_channel_correlation).get("shared_noise_weight", 0.0)
+        )
+        if shared_noise_weight < 0.0 or shared_noise_weight > 1.0:
+            raise ValueError("base_channel_correlation.shared_noise_weight must be in [0, 1]")
+        if not isinstance(self.split_phase_shift, Mapping):
+            raise ValueError("split_phase_shift must be a mapping")
+        split_phase_cfg = dict(self.split_phase_shift)
+        split_phase_enabled = bool(split_phase_cfg.get("enabled", False))
+        split_phase_mode = str(split_phase_cfg.get("mode", "fixed_map"))
+        split_phase_modulo = float(split_phase_cfg.get("phase_modulo", float(2.0 * np.pi)))
+        if split_phase_modulo <= 0.0:
+            raise ValueError("split_phase_shift.phase_modulo must be > 0")
+        if split_phase_enabled:
+            if split_phase_mode != "fixed_map":
+                raise ValueError(
+                    "split_phase_shift.mode must be 'fixed_map' when split_phase_shift.enabled=true"
+                )
+            values_cfg = split_phase_cfg.get("values", {})
+            if not isinstance(values_cfg, Mapping):
+                raise ValueError("split_phase_shift.values must be a mapping")
+            missing_splits = [split for split in self.splits if split not in values_cfg]
+            if missing_splits:
+                raise ValueError(
+                    f"split_phase_shift.values is missing offsets for splits: {missing_splits}"
+                )
+            for split_name, offset_value in values_cfg.items():
+                try:
+                    float(offset_value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"split_phase_shift.values[{split_name}] must be numeric"
+                    ) from exc
         if self.length_normalization not in ("none", "crop", "pad", "resample"):
             raise ValueError(
                 "length_normalization must be one of {'none','crop','pad','resample'}"
@@ -511,15 +637,30 @@ class TSGeneratorConfig:
                 "uniform_segments",
                 "point_events_from_density",
                 "period_locked_frequency",
+                "energy_aware_segments",
+                "trend_parameter_aware_segments",
             ):
                 raise ValueError(
                     "segment_planner planner must be one of "
-                    "{'uniform_segments','point_events_from_density','period_locked_frequency'}"
+                    "{'uniform_segments','point_events_from_density','period_locked_frequency',"
+                    "'energy_aware_segments','trend_parameter_aware_segments'}"
                 )
             if "density_range" in planner_cfg:
                 _parse_pair(
                     planner_cfg["density_range"], "segment_planner.density_range"
                 )
+        if self.support_label_mode not in ("strict_segment", "effective_support"):
+            raise ValueError(
+                "support_label_mode must be one of {'strict_segment','effective_support'}"
+            )
+        if self.support_eps_mode not in ("relative", "absolute"):
+            raise ValueError("support_eps_mode must be one of {'relative','absolute'}")
+        if self.support_eps_value < 0:
+            raise ValueError("support_eps_value must be >= 0")
+        if self.min_effective_label_length_non_extremum <= 0:
+            raise ValueError(
+                "min_effective_label_length_non_extremum must be >= 1"
+            )
         if self.max_placement_attempts <= 0:
             raise ValueError("max_placement_attempts must be > 0")
 
@@ -553,6 +694,12 @@ class TSGeneratorConfig:
                     "special_anomaly_policies": self.special_anomaly_policies,
                     "segment_planner": self.segment_planner,
                     "min_segment_length_by_anomaly": self.min_segment_length_by_anomaly,
+                    "support_label_mode": self.support_label_mode,
+                    "support_eps_mode": self.support_eps_mode,
+                    "support_eps_value": self.support_eps_value,
+                    "min_effective_label_length_non_extremum": (
+                        self.min_effective_label_length_non_extremum
+                    ),
                 },
                 "variants": {
                     "base_oscillations": self.base_oscillations,
@@ -563,8 +710,12 @@ class TSGeneratorConfig:
                     "profiles_per_pair": self.profiles_per_pair,
                     "pair_profiles": self.pair_profiles,
                     "base_parameter_policy": self.base_parameter_policy,
+                    "base_channel_parameter_policy": self.base_channel_parameter_policy,
                     "anomaly_parameter_policy": self.anomaly_parameter_policy,
                     "base_oscillation_overrides": self.base_oscillation_overrides,
+                    "base_channel_overrides": self.base_channel_overrides,
+                    "base_channel_correlation": self.base_channel_correlation,
+                    "split_phase_shift": self.split_phase_shift,
                     "anomaly_overrides": self.anomaly_overrides,
                     "variant_overrides": self.variant_overrides,
                 },
@@ -683,6 +834,9 @@ class TSDatasetGenerator:
                 )
             except Exception as exc:
                 reason = f"{type(exc).__name__}: {exc}"
+                variant_dir = variants_root / variant.variant_id
+                if variant_dir.exists():
+                    shutil.rmtree(variant_dir, ignore_errors=True)
                 skipped_variants.append(
                     {"variant_id": variant.variant_id, "reason": reason}
                 )
@@ -894,6 +1048,7 @@ class TSDatasetGenerator:
         variant_dir = variants_root / variant.variant_id
         variant_dir.mkdir(parents=True, exist_ok=True)
         base_parameter_template = self._resolve_base_parameters(variant)
+        base_channel_parameter_template = self._resolve_base_channel_parameters(variant)
         anomaly_parameter_template = self._resolve_anomaly_parameters(variant)
         variant_anomaly_policy = self._resolve_variant_anomaly_policy(variant)
         segment_planner_override = variant_anomaly_policy.get("segment_planner", {})
@@ -918,6 +1073,13 @@ class TSDatasetGenerator:
             if self.config.base_parameter_policy == "fixed_per_variant"
             else None
         )
+        fixed_base_channel_parameters = (
+            self._realize_base_channel_parameters(
+                base_channel_parameter_template, variant_param_rng
+            )
+            if self.config.base_channel_parameter_policy == "fixed_per_variant"
+            else None
+        )
         fixed_anomaly_parameters = (
             self._realize_parameters(anomaly_parameter_template, variant_param_rng)
             if self.config.anomaly_parameter_policy == "fixed_per_variant"
@@ -931,6 +1093,16 @@ class TSDatasetGenerator:
                 "kind": variant.base_oscillation,
                 "parameter_template": _to_builtin_types(base_parameter_template),
                 "realized_parameters": _to_builtin_types(fixed_base_parameters),
+                "channel_parameter_template": _to_builtin_types(
+                    base_channel_parameter_template
+                ),
+                "channel_realized_parameters": _to_builtin_types(
+                    fixed_base_channel_parameters
+                ),
+                "channel_correlation": _to_builtin_types(
+                    self.config.base_channel_correlation
+                ),
+                "split_phase_shift": _to_builtin_types(self.config.split_phase_shift),
             },
             "anomaly_type": {
                 "kind": variant.anomaly_type,
@@ -956,8 +1128,10 @@ class TSDatasetGenerator:
             },
             "parameter_policies": {
                 "base_parameter_policy": self.config.base_parameter_policy,
+                "base_channel_parameter_policy": self.config.base_channel_parameter_policy,
                 "anomaly_parameter_policy": self.config.anomaly_parameter_policy,
             },
+            "split_phase_shift": _to_builtin_types(self.config.split_phase_shift),
         }
         with (variant_dir / "variant_config.yaml").open(
             "w", encoding="utf-8"
@@ -994,11 +1168,14 @@ class TSDatasetGenerator:
                 split_seed_audit[instance_name] = seeds
                 summary = self._generate_instance(
                     variant=variant,
+                    split=split,
                     instance_dir=instance_dir,
                     seeds=seeds,
                     base_parameter_template=base_parameter_template,
+                    base_channel_parameter_template=base_channel_parameter_template,
                     anomaly_parameter_template=anomaly_parameter_template,
                     fixed_base_parameters=fixed_base_parameters,
+                    fixed_base_channel_parameters=fixed_base_channel_parameters,
                     fixed_anomaly_parameters=fixed_anomaly_parameters,
                     variant_anomaly_policy=variant_anomaly_policy,
                     variant_segment_planner=variant_segment_planner,
@@ -1034,8 +1211,10 @@ class TSDatasetGenerator:
             "instance_count": len(variant_instance_summaries),
             "parameter_policies": {
                 "base_parameter_policy": self.config.base_parameter_policy,
+                "base_channel_parameter_policy": self.config.base_channel_parameter_policy,
                 "anomaly_parameter_policy": self.config.anomaly_parameter_policy,
             },
+            "split_phase_shift": _to_builtin_types(self.config.split_phase_shift),
             "overlap_policy": effective_overlap_policy,
             "segment_planner": _to_builtin_types(variant_segment_planner),
             "variant_anomaly_policy": _to_builtin_types(variant_anomaly_policy),
@@ -1065,6 +1244,20 @@ class TSDatasetGenerator:
             variant_override = {}
         parameters.update(copy.deepcopy(variant_override.get("base_oscillation", {})))
         parameters[PARAMETERS.LENGTH] = self.config.length
+        return parameters
+
+    def _resolve_base_channel_parameters(self, variant: VariantSpec) -> Dict[str, Any]:
+        base_kind = variant.base_oscillation
+        parameters: Dict[str, Any] = {}
+        parameters.update(copy.deepcopy(self.config.base_channel_overrides.get(base_kind, {})))
+        pair_override = self.config.variant_overrides.get(variant.pair_id, {})
+        if not isinstance(pair_override, Mapping):
+            pair_override = {}
+        parameters.update(copy.deepcopy(pair_override.get("base_channel", {})))
+        variant_override = self.config.variant_overrides.get(variant.variant_id, {})
+        if not isinstance(variant_override, Mapping):
+            variant_override = {}
+        parameters.update(copy.deepcopy(variant_override.get("base_channel", {})))
         return parameters
 
     def _resolve_anomaly_parameters(self, variant: VariantSpec) -> Dict[str, Any]:
@@ -1107,9 +1300,20 @@ class TSDatasetGenerator:
         instance_seed = _derive_seed(
             self.config.master_seed, variant_id, split, instance_label
         )
+        split_stable_instance_seed = _derive_seed(
+            self.config.master_seed, variant_id, instance_label
+        )
         return {
             "instance_seed": instance_seed,
+            "split_stable_instance_seed": split_stable_instance_seed,
             "base_seed": _derive_seed(instance_seed, "base"),
+            "base_shared_noise_seed": _derive_seed(instance_seed, "base-shared-noise"),
+            "base_params_seed": _derive_seed(
+                split_stable_instance_seed, "base-parameter-sampling"
+            ),
+            "base_channel_params_seed": _derive_seed(
+                split_stable_instance_seed, "base-channel-parameter-sampling"
+            ),
             "plan_seed": _derive_seed(instance_seed, "segment-plan"),
             "anomaly_seed": _derive_seed(instance_seed, "anomaly-transform"),
             "params_seed": _derive_seed(instance_seed, "parameter-sampling"),
@@ -1119,32 +1323,62 @@ class TSDatasetGenerator:
     def _generate_instance(
         self,
         variant: VariantSpec,
+        split: str,
         instance_dir: Path,
         seeds: Mapping[str, int],
         base_parameter_template: Mapping[str, Any],
+        base_channel_parameter_template: Mapping[str, Any],
         anomaly_parameter_template: Mapping[str, Any],
         fixed_base_parameters: Optional[Mapping[str, Any]],
+        fixed_base_channel_parameters: Optional[List[Dict[str, Any]]],
         fixed_anomaly_parameters: Optional[Mapping[str, Any]],
         variant_anomaly_policy: Optional[Mapping[str, Any]],
         variant_segment_planner: Optional[Mapping[str, Any]],
     ) -> Dict[str, Any]:
-        parameter_rng = np.random.default_rng(int(seeds["params_seed"]))
+        base_parameter_rng = np.random.default_rng(int(seeds["base_params_seed"]))
+        base_channel_parameter_rng = np.random.default_rng(
+            int(seeds["base_channel_params_seed"])
+        )
+        anomaly_parameter_rng = np.random.default_rng(int(seeds["params_seed"]))
         if self.config.base_parameter_policy == "fixed_per_variant":
             if fixed_base_parameters is None:
                 base_parameters = self._realize_parameters(
-                    base_parameter_template, parameter_rng
+                    base_parameter_template, base_parameter_rng
                 )
             else:
                 base_parameters = copy.deepcopy(dict(fixed_base_parameters))
         else:
             base_parameters = self._realize_parameters(
-                base_parameter_template, parameter_rng
+                base_parameter_template, base_parameter_rng
             )
+
+        if self.config.base_channel_parameter_policy == "fixed_per_variant":
+            if fixed_base_channel_parameters is None:
+                base_channel_parameters = self._realize_base_channel_parameters(
+                    base_channel_parameter_template, base_channel_parameter_rng
+                )
+            else:
+                base_channel_parameters = copy.deepcopy(fixed_base_channel_parameters)
+        else:
+            base_channel_parameters = self._realize_base_channel_parameters(
+                base_channel_parameter_template, base_channel_parameter_rng
+            )
+        base_parameters_per_channel_raw = self._compose_base_parameters_per_channel(
+            base_parameters=base_parameters,
+            base_channel_parameters=base_channel_parameters,
+        )
+        (
+            base_parameters_per_channel,
+            split_phase_shift_info,
+        ) = self._apply_split_phase_shift(
+            base_parameters_per_channel=base_parameters_per_channel_raw,
+            split=split,
+        )
 
         if self.config.anomaly_parameter_policy == "fixed_per_variant":
             if fixed_anomaly_parameters is None:
                 anomaly_parameters_instance = self._realize_parameters(
-                    anomaly_parameter_template, parameter_rng
+                    anomaly_parameter_template, anomaly_parameter_rng
                 )
             else:
                 anomaly_parameters_instance = copy.deepcopy(
@@ -1152,25 +1386,31 @@ class TSDatasetGenerator:
                 )
         elif self.config.anomaly_parameter_policy == "random_per_instance":
             anomaly_parameters_instance = self._realize_parameters(
-                anomaly_parameter_template, parameter_rng
+                anomaly_parameter_template, anomaly_parameter_rng
             )
         else:
             anomaly_parameters_instance = None
 
-        base_template_clean = self._generate_base_template(
-            variant.base_oscillation, base_parameters, int(seeds["base_seed"])
+        clean_bos = self._generate_base_channels(
+            base_kind=variant.base_oscillation,
+            base_parameters_per_channel=base_parameters_per_channel,
+            seed=int(seeds["base_seed"]),
         )
-        clean_bos = self._clone_bases(base_template_clean)
-        clean_base = np.tile(base_template_clean.timeseries[:, np.newaxis], (1, self.config.channels))  # type: ignore[index]
+        self._apply_shared_noise_correlation(
+            clean_bos, seed=int(seeds["base_shared_noise_seed"])
+        )
+        clean_base = self._stack_channel_timeseries(clean_bos)
         clean = self._apply_variations(clean_base, clean_bos)
 
-        base_template_anom = self._generate_base_template(
-            variant.base_oscillation, base_parameters, int(seeds["base_seed"])
+        anomalous_bos = self._generate_base_channels(
+            base_kind=variant.base_oscillation,
+            base_parameters_per_channel=base_parameters_per_channel,
+            seed=int(seeds["base_seed"]),
         )
-        anomalous_bos = self._clone_bases(base_template_anom)
-        anomalous_base = np.tile(
-            base_template_anom.timeseries[:, np.newaxis], (1, self.config.channels)  # type: ignore[index]
+        self._apply_shared_noise_correlation(
+            anomalous_bos, seed=int(seeds["base_shared_noise_seed"])
         )
+        anomalous_base = self._stack_channel_timeseries(anomalous_bos)
 
         plan_rng = np.random.default_rng(int(seeds["plan_seed"]))
         target_density = float(
@@ -1184,7 +1424,7 @@ class TSDatasetGenerator:
             planner_cfg = copy.deepcopy(dict(variant_segment_planner))
         else:
             planner_cfg = self._resolve_segment_planner(variant.anomaly_type)
-        base_period_size = base_template_anom.get_period_size()
+        base_period_size = anomalous_bos[0].get_period_size()
         if base_period_size is not None:
             base_period_size = int(base_period_size)
         if variant.anomaly_type == "trend" and base_period_size is not None:
@@ -1197,8 +1437,12 @@ class TSDatasetGenerator:
                 special_policy["min_segment_length"] = int(
                     max(existing_min, 2 * base_period_size)
                 )
-        base_frequency = getattr(base_template_anom, "frequency", None)
+        base_frequency = getattr(anomalous_bos[0], "frequency", None)
         period_boundaries = self._compute_period_boundaries(base_frequency)
+        period_boundaries_by_channel = {
+            channel: self._compute_period_boundaries(getattr(bo, "frequency", None))
+            for channel, bo in enumerate(anomalous_bos)
+        }
         active_overlap_policy = str(
             special_policy.get(
                 "overlap_policy",
@@ -1209,10 +1453,14 @@ class TSDatasetGenerator:
             rng=plan_rng,
             target_density=target_density,
             anomaly_type=variant.anomaly_type,
+            clean_values=clean_base,
             anomaly_policy=special_policy,
             planner_cfg=planner_cfg,
             base_period_size=base_period_size,
             period_boundaries=period_boundaries,
+            period_boundaries_by_channel=period_boundaries_by_channel,
+            anomaly_parameter_template=anomaly_parameter_template,
+            parameter_seed=int(seeds["params_seed"]),
         )
         anomaly_params_per_segment = self._resolve_anomaly_parameters_for_segments(
             anomaly_type=variant.anomaly_type,
@@ -1239,20 +1487,44 @@ class TSDatasetGenerator:
         )
         anomalous = self._apply_variations(anomalous_base, anomalous_bos)
 
-        achieved_density = float(labels.max(axis=1).mean())
-        if not (
-            self.config.density_range[0]
-            <= achieved_density
-            <= self.config.density_range[1]
-        ):
-            raise ValueError(
-                f"Achieved density {achieved_density:.6f} outside target range "
-                f"{self.config.density_range}."
+        achieved_density_labeled = float(labels.max(axis=1).mean())
+        achieved_density_source = achieved_density_labeled
+        if self.config.support_label_mode == "effective_support":
+            source_labels = np.zeros_like(labels, dtype=np.int8)
+            for event in events:
+                source_start = int(event.get("source_start", event["start"]))
+                source_end = int(event.get("source_end", event["end"]))
+                source_channel = int(event["channel"])
+                if source_end > source_start:
+                    source_labels[source_start:source_end, source_channel] = 1
+            achieved_density_source = float(source_labels.max(axis=1).mean())
+            density_for_validation = achieved_density_source
+            density_validation_mode = "source_support"
+        else:
+            density_for_validation = achieved_density_labeled
+            density_validation_mode = "labeled_support"
+        active_density_tolerance = float(
+            special_policy.get(
+                "density_tolerance",
+                planner_cfg.get("density_tolerance", self.config.density_tolerance),
             )
-        if abs(achieved_density - target_density) > self.config.density_tolerance:
+        )
+        if active_density_tolerance < 0:
+            raise ValueError("density_tolerance must be >= 0")
+        lower_with_tolerance = self.config.density_range[0] - active_density_tolerance
+        upper_with_tolerance = self.config.density_range[1] + active_density_tolerance
+        if not (lower_with_tolerance <= density_for_validation <= upper_with_tolerance):
             raise ValueError(
-                f"Density mismatch | target={target_density:.6f} | achieved={achieved_density:.6f} "
-                f"| tolerance={self.config.density_tolerance:.6f}"
+                f"Achieved density {density_for_validation:.6f} outside target range "
+                f"{self.config.density_range} | mode={density_validation_mode} "
+                f"| tolerance={active_density_tolerance:.6f}"
+                f"| labeled={achieved_density_labeled:.6f} | source={achieved_density_source:.6f}."
+            )
+        if abs(density_for_validation - target_density) > active_density_tolerance:
+            raise ValueError(
+                f"Density mismatch | target={target_density:.6f} | achieved={density_for_validation:.6f} "
+                f"| tolerance={active_density_tolerance:.6f} | mode={density_validation_mode} "
+                f"| labeled={achieved_density_labeled:.6f} | source={achieved_density_source:.6f}"
             )
 
         self._check_labels_and_events_consistency(labels, events)
@@ -1263,19 +1535,39 @@ class TSDatasetGenerator:
         _write_json(instance_dir / "events.json", events)
 
         segment_lengths = [int(event["length"]) for event in events]
+        source_segment_lengths = [
+            int(event.get("source_end", event["end"])) - int(event.get("source_start", event["start"]))
+            for event in events
+        ]
+        effective_support_shrink_count = int(
+            sum(
+                1
+                for event in events
+                if int(event.get("source_start", event["start"])) != int(event["start"])
+                or int(event.get("source_end", event["end"])) != int(event["end"])
+            )
+        )
+        energy_fallback_count = int(
+            sum(1 for segment in segment_plan if bool(segment.attrs.get("energy_fallback", False)))
+        )
         per_channel_counts = {
             str(channel): int(sum(1 for event in events if event["channel"] == channel))
             for channel in range(self.config.channels)
         }
         instance_summary: Dict[str, Any] = {
             "instance_id": instance_dir.name,
+            "split": split,
             "variant_id": variant.variant_id,
             "profile_id": variant.profile_id,
             "base_oscillation": variant.base_oscillation,
             "anomaly_type": variant.anomaly_type,
             "target_density": target_density,
-            "achieved_density": achieved_density,
-            "density_error": abs(achieved_density - target_density),
+            "achieved_density": density_for_validation,
+            "achieved_density_labeled": achieved_density_labeled,
+            "achieved_density_source": achieved_density_source,
+            "density_validation_mode": density_validation_mode,
+            "density_error": abs(density_for_validation - target_density),
+            "density_tolerance": active_density_tolerance,
             "n_segments": len(events),
             "segment_length_mean": float(np.mean(segment_lengths)),
             "segment_length_median": float(np.median(segment_lengths)),
@@ -1283,14 +1575,27 @@ class TSDatasetGenerator:
             "segment_length_min": int(np.min(segment_lengths)),
             "segment_length_max": int(np.max(segment_lengths)),
             "segment_lengths": segment_lengths,
+            "source_segment_lengths": source_segment_lengths,
+            "effective_support_shrink_count": effective_support_shrink_count,
+            "energy_fallback_count": energy_fallback_count,
             "per_channel_segment_counts": per_channel_counts,
             "overlap_policy": active_overlap_policy,
             "segment_planner": _to_builtin_types(planner_cfg),
             "variant_anomaly_policy": _to_builtin_types(special_policy),
             "length_normalization": self.config.length_normalization,
+            "support_label_mode": self.config.support_label_mode,
+            "support_eps_mode": self.config.support_eps_mode,
+            "support_eps_value": self.config.support_eps_value,
             "base_parameter_policy": self.config.base_parameter_policy,
+            "base_channel_parameter_policy": self.config.base_channel_parameter_policy,
             "anomaly_parameter_policy": self.config.anomaly_parameter_policy,
             "base_parameters": _to_builtin_types(base_parameters),
+            "base_channel_parameters": _to_builtin_types(base_channel_parameters),
+            "base_parameters_per_channel": _to_builtin_types(base_parameters_per_channel),
+            "split_phase_shift": _to_builtin_types(split_phase_shift_info),
+            "base_channel_correlation": _to_builtin_types(
+                self.config.base_channel_correlation
+            ),
             "anomaly_parameters_instance": _to_builtin_types(
                 anomaly_parameters_instance
             ),
@@ -1308,15 +1613,87 @@ class TSDatasetGenerator:
 
         return _to_builtin_types(instance_summary)
 
-    def _generate_base_template(
-        self, base_kind: str, base_parameters: Mapping[str, Any], seed: int
-    ) -> Any:
-        bo = BaseOscillation.from_key(base_kind, **copy.deepcopy(dict(base_parameters)))
-        ctx = GenerationContext(SeedSequence(seed))
-        bo.generate_timeseries_and_variations(
-            ctx.to_bo(channel=0, previous_channels=[])
-        )
+    def _realize_base_channel_parameters(
+        self, template: Mapping[str, Any], rng: np.random.Generator
+    ) -> List[Dict[str, Any]]:
+        if len(template) == 0:
+            return [{} for _ in range(self.config.channels)]
+        return [
+            self._realize_parameters(template, rng) for _ in range(self.config.channels)
+        ]
 
+    def _compose_base_parameters_per_channel(
+        self,
+        base_parameters: Mapping[str, Any],
+        base_channel_parameters: List[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        channel_parameters: List[Dict[str, Any]] = []
+        for channel in range(self.config.channels):
+            params = copy.deepcopy(dict(base_parameters))
+            if channel < len(base_channel_parameters):
+                params.update(copy.deepcopy(dict(base_channel_parameters[channel])))
+            params[PARAMETERS.LENGTH] = self.config.length
+            channel_parameters.append(params)
+        return channel_parameters
+
+    def _apply_split_phase_shift(
+        self,
+        base_parameters_per_channel: List[Mapping[str, Any]],
+        split: str,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Apply deterministic split-specific phase shifts to base parameters."""
+        cfg = dict(self.config.split_phase_shift)
+        enabled = bool(cfg.get("enabled", False))
+        phase_modulo = float(cfg.get("phase_modulo", float(2.0 * np.pi)))
+        offset = 0.0
+        if enabled:
+            offset = float(dict(cfg.get("values", {}))[split])
+
+        realized: List[Dict[str, Any]] = [
+            copy.deepcopy(dict(params)) for params in base_parameters_per_channel
+        ]
+        channels_with_phase: List[int] = []
+        for channel, params in enumerate(realized):
+            if "phase" not in params:
+                continue
+            channels_with_phase.append(channel)
+            if not enabled or abs(offset) <= 0.0:
+                continue
+            shifted_phase = float(params["phase"]) + offset
+            params["phase"] = float(np.mod(shifted_phase, phase_modulo))
+
+        info: Dict[str, Any] = {
+            "enabled": enabled,
+            "split": split,
+            "offset": float(offset),
+            "phase_modulo": phase_modulo,
+            "channels_with_phase": channels_with_phase,
+            "phase_shift_applied": bool(enabled and abs(offset) > 0.0),
+        }
+        return realized, info
+
+    def _generate_base_channels(
+        self,
+        base_kind: str,
+        base_parameters_per_channel: List[Mapping[str, Any]],
+        seed: int,
+    ) -> List[Any]:
+        ctx = GenerationContext(SeedSequence(seed))
+        channels: List[Any] = []
+        previous_channels: List[np.ndarray] = []
+        for channel, channel_parameters in enumerate(base_parameters_per_channel):
+            bo = BaseOscillation.from_key(
+                base_kind, **copy.deepcopy(dict(channel_parameters))
+            )
+            bo.generate_timeseries_and_variations(
+                ctx.to_bo(channel=channel, previous_channels=previous_channels)
+            )
+            self._sanitize_generated_base_channel(base_kind, bo)
+            channels.append(bo)
+            previous_channels.append(np.array(bo.timeseries, copy=True))
+        return channels
+
+    def _sanitize_generated_base_channel(self, base_kind: str, bo: Any) -> None:
         if bo.timeseries is None:
             raise ValueError(f"Base oscillation '{base_kind}' produced no timeseries.")
         if bo.timeseries.shape[0] != self.config.length:
@@ -1331,17 +1708,51 @@ class TSDatasetGenerator:
         bo.timeseries = bo.timeseries.astype(np.float64)
         bo.noise = bo.noise.astype(np.float64)
         bo.trend_series = bo.trend_series.astype(np.float64)
-        return bo
 
-    def _clone_bases(self, base_template: Any) -> List[Any]:
-        bases = []
-        for _ in range(self.config.channels):
-            cloned = copy.deepcopy(base_template)
-            cloned.timeseries = np.array(base_template.timeseries, copy=True)
-            cloned.noise = np.array(base_template.noise, copy=True)
-            cloned.trend_series = np.array(base_template.trend_series, copy=True)
-            bases.append(cloned)
-        return bases
+    def _stack_channel_timeseries(self, channel_bos: List[Any]) -> np.ndarray:
+        return np.column_stack([bo.timeseries for bo in channel_bos]).astype(np.float64)
+
+    def _shared_noise_weight(self) -> float:
+        weight = float(self.config.base_channel_correlation.get("shared_noise_weight", 0.0))
+        return float(np.clip(weight, 0.0, 1.0))
+
+    def _apply_shared_noise_correlation(self, channel_bos: List[Any], seed: int) -> None:
+        shared_weight = self._shared_noise_weight()
+        if shared_weight <= 0.0 or len(channel_bos) <= 1:
+            return
+        noise_lengths = {
+            int(np.asarray(bo.noise).shape[0])
+            for bo in channel_bos
+            if bo.noise is not None
+        }
+        if len(noise_lengths) == 0:
+            return
+        if len(noise_lengths) > 1:
+            raise ValueError(
+                "Cannot apply shared-noise correlation to channel noises with different lengths."
+            )
+        noise_length = next(iter(noise_lengths))
+        rng = np.random.default_rng(seed)
+        shared_noise = rng.normal(0.0, 1.0, noise_length).astype(np.float64)
+        shared_std = float(np.std(shared_noise))
+        if shared_std > 0.0:
+            shared_noise = (shared_noise - float(np.mean(shared_noise))) / shared_std
+        else:
+            shared_noise = np.zeros(noise_length, dtype=np.float64)
+        residual_weight = float(np.sqrt(max(0.0, 1.0 - shared_weight**2)))
+        for bo in channel_bos:
+            if bo.noise is None:
+                continue
+            noise = np.asarray(bo.noise, dtype=np.float64)
+            mean = float(np.mean(noise))
+            centered = noise - mean
+            channel_std = float(np.std(centered))
+            if channel_std <= 1e-12:
+                bo.noise = np.array(noise, copy=True)
+                continue
+            shared_component = shared_noise * channel_std
+            mixed = residual_weight * centered + shared_weight * shared_component
+            bo.noise = (mixed + mean).astype(np.float64)
 
     def _apply_variations(self, base: np.ndarray, channel_bos: List[Any]) -> np.ndarray:
         result = np.array(base, dtype=np.float64, copy=True)
@@ -1354,15 +1765,63 @@ class TSDatasetGenerator:
                 result[:, channel] = result[:, channel] + bo.offset
         return result
 
+    def _compose_channel_window_with_variations(
+        self, base: np.ndarray, bo: Any, channel: int, start: int, end: int
+    ) -> np.ndarray:
+        """Compose a single-channel window including variations.
+
+        Parameters
+        ----------
+        base : np.ndarray
+            Base (pre-variation) multichannel timeseries.
+        bo : Any
+            Base oscillation object for the channel.
+        channel : int
+            Channel index.
+        start : int
+            Window start index (inclusive).
+        end : int
+            Window end index (exclusive).
+
+        Returns
+        -------
+        np.ndarray
+            Composed window values.
+        """
+        start_i = max(0, min(int(start), self.config.length))
+        end_i = max(start_i, min(int(end), self.config.length))
+        window = np.array(base[start_i:end_i, channel], dtype=np.float64, copy=True)
+        if window.size == 0:
+            return window
+        if bo.noise is not None:
+            window = window + np.asarray(bo.noise[start_i:end_i], dtype=np.float64)
+        if bo.trend_series is not None:
+            window = window + np.asarray(
+                bo.trend_series[start_i:end_i], dtype=np.float64
+            )
+        if bo.offset is not None:
+            offset_array = np.asarray(bo.offset, dtype=np.float64)
+            if offset_array.ndim == 0:
+                window = window + float(offset_array)
+            elif offset_array.shape[0] == self.config.length:
+                window = window + offset_array[start_i:end_i]
+            else:
+                window = window + float(offset_array.reshape(-1)[0])
+        return window
+
     def _sample_segment_plan(
         self,
         rng: np.random.Generator,
         target_density: float,
         anomaly_type: str,
+        clean_values: Optional[np.ndarray] = None,
         anomaly_policy: Optional[Mapping[str, Any]] = None,
         planner_cfg: Optional[Mapping[str, Any]] = None,
         base_period_size: Optional[int] = None,
         period_boundaries: Optional[Iterable[int]] = None,
+        period_boundaries_by_channel: Optional[Mapping[int, Optional[Iterable[int]]]] = None,
+        anomaly_parameter_template: Optional[Mapping[str, Any]] = None,
+        parameter_seed: Optional[int] = None,
     ) -> List[SegmentPlan]:
         if planner_cfg is None:
             planner_cfg = self._resolve_segment_planner(anomaly_type)
@@ -1400,6 +1859,37 @@ class TSDatasetGenerator:
                 anomaly_policy=special_policy,
                 base_period_size=base_period_size,
                 period_boundaries=period_boundaries,
+                period_boundaries_by_channel=period_boundaries_by_channel,
+            )
+        if planner_name == "energy_aware_segments":
+            return self._sample_energy_aware_segments(
+                rng=rng,
+                target_density=target_density,
+                overlap_policy=overlap_policy,
+                planner_cfg=planner_cfg,
+                anomaly_policy=special_policy,
+                anomaly_type=anomaly_type,
+                clean_values=clean_values,
+            )
+        if planner_name == "trend_parameter_aware_segments":
+            if anomaly_type != "trend":
+                raise ValueError(
+                    "trend_parameter_aware_segments planner is only supported for anomaly_type='trend'."
+                )
+            if anomaly_parameter_template is None or parameter_seed is None:
+                raise ValueError(
+                    "trend_parameter_aware_segments planner requires anomaly_parameter_template "
+                    "and parameter_seed."
+                )
+            return self._sample_trend_parameter_aware_segments(
+                rng=rng,
+                target_density=target_density,
+                overlap_policy=overlap_policy,
+                planner_cfg=planner_cfg,
+                anomaly_policy=special_policy,
+                anomaly_parameter_template=anomaly_parameter_template,
+                parameter_seed=int(parameter_seed),
+                clean_values=clean_values,
             )
 
         segment_count_range = _parse_pair_int(
@@ -1529,27 +2019,52 @@ class TSDatasetGenerator:
         anomaly_policy: Mapping[str, Any],
         base_period_size: Optional[int],
         period_boundaries: Optional[Iterable[int]] = None,
+        period_boundaries_by_channel: Optional[
+            Mapping[int, Optional[Iterable[int]]]
+        ] = None,
     ) -> List[SegmentPlan]:
-        boundaries = self._sanitize_period_boundaries(period_boundaries)
-        if boundaries is None:
-            if base_period_size is None or int(base_period_size) <= 1:
-                raise ValueError(
-                    "period_locked_frequency planner requires either period boundaries "
-                    "or period_size > 1."
-                )
-            period_size = int(base_period_size)
-            boundaries = np.arange(0, self.config.length + 1, period_size, dtype=int)
-            if boundaries[-1] != self.config.length:
-                boundaries = np.append(boundaries, self.config.length)
-        else:
-            period_size = int(np.median(np.diff(boundaries)))
+        channel_boundaries: Dict[int, np.ndarray] = {}
+        if period_boundaries_by_channel is not None:
+            for channel in range(self.config.channels):
+                raw_boundaries = period_boundaries_by_channel.get(channel)
+                sanitized = self._sanitize_period_boundaries(raw_boundaries)
+                if sanitized is not None and sanitized.shape[0] >= 2:
+                    channel_boundaries[channel] = sanitized
+        if len(channel_boundaries) == 0:
+            boundaries = self._sanitize_period_boundaries(period_boundaries)
+            if boundaries is None:
+                if base_period_size is None or int(base_period_size) <= 1:
+                    raise ValueError(
+                        "period_locked_frequency planner requires either period boundaries "
+                        "or period_size > 1."
+                    )
+                period_size = int(base_period_size)
+                boundaries = np.arange(0, self.config.length + 1, period_size, dtype=int)
+                if boundaries[-1] != self.config.length:
+                    boundaries = np.append(boundaries, self.config.length)
+            for channel in range(self.config.channels):
+                channel_boundaries[channel] = np.array(boundaries, copy=True)
 
-        max_whole_periods = int(boundaries.shape[0] - 1)
-        if max_whole_periods <= 0:
+        channel_period_counts = {
+            channel: int(boundaries.shape[0] - 1)
+            for channel, boundaries in channel_boundaries.items()
+        }
+        channel_period_counts = {
+            channel: count for channel, count in channel_period_counts.items() if count > 0
+        }
+        if len(channel_period_counts) == 0:
             raise ValueError(
-                "period_locked_frequency planner requires at least one full base period in the series."
+                "period_locked_frequency planner requires at least one channel with period boundaries."
             )
-        avg_period_size = float(self.config.length) / float(max_whole_periods)
+        max_whole_periods = int(max(channel_period_counts.values()))
+        avg_period_size = float(
+            np.median(
+                [
+                    float(self.config.length) / float(period_count)
+                    for period_count in channel_period_counts.values()
+                ]
+            )
+        )
 
         periods_per_segment_range = _parse_pair_int(
             planner_cfg.get("periods_per_segment_range", [2, 4]),
@@ -1629,28 +2144,25 @@ class TSDatasetGenerator:
         segments: List[SegmentPlan] = []
 
         for period_count in periods_per_segment:
-            placed = False
-            candidate_start_period_idxs = np.arange(
-                0, max_whole_periods - period_count + 1, dtype=int
-            )
-            if candidate_start_period_idxs.size == 0:
+            eligible_channels = [
+                channel
+                for channel, boundaries in channel_boundaries.items()
+                if int(boundaries.shape[0] - 1) >= int(period_count)
+            ]
+            if len(eligible_channels) == 0:
                 raise ValueError(
-                    f"No candidate starts available for period_count={period_count}."
+                    "No channels can satisfy period_count=%s under period-locked planner."
+                    % period_count
                 )
-            if not align_to_period_start:
-                # Fallback behavior for explicit non-aligned mode: treat period as a fixed step.
-                length = int(period_count * period_size)
-                max_start = self.config.length - length
-                if max_start < 0:
-                    raise ValueError(
-                        f"Segment length {length} exceeds series length {self.config.length}."
-                    )
-                candidate_starts = np.arange(0, max_start + 1, dtype=int)
-            else:
-                candidate_starts = boundaries[candidate_start_period_idxs]
-
+            placed = False
             for _ in range(self.config.max_placement_attempts):
-                channel = int(rng.integers(0, self.config.channels))
+                channel = int(eligible_channels[int(rng.integers(0, len(eligible_channels)))])
+                boundaries = channel_boundaries[channel]
+                candidate_start_period_idxs = np.arange(
+                    0, int(boundaries.shape[0] - 1) - int(period_count) + 1, dtype=int
+                )
+                if candidate_start_period_idxs.size == 0:
+                    continue
                 if align_to_period_start:
                     start_period_idx = int(
                         candidate_start_period_idxs[
@@ -1660,6 +2172,14 @@ class TSDatasetGenerator:
                     start = int(boundaries[start_period_idx])
                     end = int(boundaries[start_period_idx + period_count])
                 else:
+                    period_size = int(np.median(np.diff(boundaries)))
+                    if period_size <= 0:
+                        continue
+                    length = int(period_count * period_size)
+                    max_start = self.config.length - length
+                    if max_start < 0:
+                        continue
+                    candidate_starts = np.arange(0, max_start + 1, dtype=int)
                     start = int(
                         candidate_starts[int(rng.integers(0, candidate_starts.size))]
                     )
@@ -1692,21 +2212,36 @@ class TSDatasetGenerator:
                     placed = True
                     break
             if not placed:
-                channel_order = rng.permutation(self.config.channels).tolist()
-                if align_to_period_start:
-                    start_order = candidate_start_period_idxs[
-                        rng.permutation(candidate_start_period_idxs.size)
-                    ]
-                else:
-                    start_order = candidate_starts[
-                        rng.permutation(candidate_starts.size)
-                    ]
+                channel_order = rng.permutation(eligible_channels).tolist()
                 for channel in channel_order:
-                    for start_candidate in start_order.tolist():
+                    boundaries = channel_boundaries[int(channel)]
+                    candidate_start_period_idxs = np.arange(
+                        0, int(boundaries.shape[0] - 1) - int(period_count) + 1, dtype=int
+                    )
+                    if candidate_start_period_idxs.size == 0:
+                        continue
+                    if align_to_period_start:
+                        start_order = candidate_start_period_idxs[
+                            rng.permutation(candidate_start_period_idxs.size)
+                        ]
+                        candidate_values = [int(value) for value in start_order.tolist()]
+                    else:
+                        period_size = int(np.median(np.diff(boundaries)))
+                        if period_size <= 0:
+                            continue
+                        length = int(period_count * period_size)
+                        max_start = self.config.length - length
+                        if max_start < 0:
+                            continue
+                        candidate_starts = np.arange(0, max_start + 1, dtype=int)
+                        start_order = candidate_starts[
+                            rng.permutation(candidate_starts.size)
+                        ]
+                        candidate_values = [int(value) for value in start_order.tolist()]
+                    for start_candidate in candidate_values:
                         if align_to_period_start:
-                            start_period_idx = int(start_candidate)
-                            start = int(boundaries[start_period_idx])
-                            end = int(boundaries[start_period_idx + period_count])
+                            start = int(boundaries[start_candidate])
+                            end = int(boundaries[start_candidate + period_count])
                         else:
                             start = int(start_candidate)
                             end = int(start + period_count * period_size)
@@ -1743,6 +2278,556 @@ class TSDatasetGenerator:
                 raise ValueError(
                     "Failed to place period-locked segment without overlap "
                     f"(period_count={period_count})."
+                )
+
+        segments.sort(
+            key=lambda segment: (segment.start, segment.channel, segment.length)
+        )
+        return segments
+
+    def _sample_energy_aware_segments(
+        self,
+        rng: np.random.Generator,
+        target_density: float,
+        overlap_policy: str,
+        planner_cfg: Mapping[str, Any],
+        anomaly_policy: Mapping[str, Any],
+        anomaly_type: str,
+        clean_values: Optional[np.ndarray],
+    ) -> List[SegmentPlan]:
+        if clean_values is None:
+            raise ValueError(
+                "energy_aware_segments planner requires clean_values for window-energy checks."
+            )
+        if clean_values.shape != (self.config.length, self.config.channels):
+            raise ValueError(
+                "energy_aware_segments expected clean_values shape "
+                f"({self.config.length}, {self.config.channels}), got {clean_values.shape}."
+            )
+
+        metric_mode = str(planner_cfg.get("energy_metric", "rms")).lower()
+        if metric_mode not in ("rms", "peak", "rms_and_peak"):
+            raise ValueError(
+                "energy_aware_segments.energy_metric must be one of "
+                "{'rms','peak','rms_and_peak'}"
+            )
+        rms_quantile = float(np.clip(float(planner_cfg.get("rms_quantile", 0.60)), 0.0, 1.0))
+        peak_quantile = float(np.clip(float(planner_cfg.get("peak_quantile", 0.55)), 0.0, 1.0))
+        weighted_sampling = bool(planner_cfg.get("weighted_sampling", True))
+        fallback_mode = str(planner_cfg.get("fallback", "uniform_segments")).lower()
+        if fallback_mode not in ("uniform_segments", "error"):
+            raise ValueError(
+                "energy_aware_segments.fallback must be one of {'uniform_segments','error'}"
+            )
+
+        segment_count_range = _parse_pair_int(
+            anomaly_policy.get(
+                "segment_count_range",
+                planner_cfg.get("segment_count_range", self.config.segment_count_range),
+            ),
+            "segment_count_range",
+        )
+        if segment_count_range[0] > segment_count_range[1]:
+            segment_count_range = (segment_count_range[1], segment_count_range[0])
+        n_segments = int(
+            rng.integers(segment_count_range[0], segment_count_range[1] + 1)
+        )
+        if n_segments > self.config.length:
+            raise ValueError(
+                f"Requested n_segments={n_segments} exceeds series length={self.config.length}."
+            )
+
+        target_points = int(round(target_density * self.config.length))
+        target_points = max(target_points, n_segments)
+        target_points = min(target_points, self.config.length)
+        min_segment_length = int(
+            anomaly_policy.get(
+                "min_segment_length",
+                planner_cfg.get(
+                    "min_segment_length", self._minimum_segment_length(anomaly_type)
+                ),
+            )
+        )
+        max_segments_for_min_length = max(1, target_points // max(1, min_segment_length))
+        if n_segments > max_segments_for_min_length:
+            self.logger.warning(
+                "Reducing n_segments from %s to %s to satisfy min_segment_length=%s "
+                "for target_points=%s (energy_aware_segments).",
+                n_segments,
+                max_segments_for_min_length,
+                min_segment_length,
+                target_points,
+            )
+            n_segments = max_segments_for_min_length
+        lengths = self._sample_segment_lengths(
+            rng, target_points, n_segments, min_segment_length=min_segment_length
+        )
+
+        occupied_global = np.zeros(self.config.length, dtype=np.int8)
+        occupied_per_channel = np.zeros(
+            (self.config.channels, self.config.length), dtype=np.int8
+        )
+        sq_prefix_by_channel = [
+            np.concatenate(
+                [[0.0], np.cumsum(np.square(clean_values[:, channel]), dtype=np.float64)]
+            )
+            for channel in range(self.config.channels)
+        ]
+        abs_by_channel = [
+            np.abs(clean_values[:, channel]).astype(np.float64)
+            for channel in range(self.config.channels)
+        ]
+        rms_cache: Dict[Tuple[int, int], np.ndarray] = {}
+        peak_cache: Dict[Tuple[int, int], np.ndarray] = {}
+        segments: List[SegmentPlan] = []
+
+        for length in lengths:
+            n_starts = self.config.length - int(length) + 1
+            if n_starts <= 0:
+                raise ValueError(
+                    f"Segment length {length} is infeasible for series length {self.config.length}."
+                )
+            if overlap_policy == "global":
+                availability_by_channel = {
+                    channel: self._available_start_mask(occupied_global, int(length))
+                    for channel in range(self.config.channels)
+                }
+            else:
+                availability_by_channel = {
+                    channel: self._available_start_mask(
+                        occupied_per_channel[channel, :], int(length)
+                    )
+                    for channel in range(self.config.channels)
+                }
+
+            thresholds_rms: Dict[int, float] = {}
+            thresholds_peak: Dict[int, float] = {}
+            if metric_mode in ("rms", "rms_and_peak"):
+                for channel in range(self.config.channels):
+                    values = self._rms_values_for_channel_length(
+                        sq_prefix=sq_prefix_by_channel[channel],
+                        length=int(length),
+                    )
+                    rms_cache[(channel, int(length))] = values
+                    thresholds_rms[channel] = float(np.quantile(values, rms_quantile))
+            if metric_mode in ("peak", "rms_and_peak"):
+                for channel in range(self.config.channels):
+                    values = self._peak_values_for_channel_length(
+                        abs_values=abs_by_channel[channel], length=int(length)
+                    )
+                    peak_cache[(channel, int(length))] = values
+                    thresholds_peak[channel] = float(np.quantile(values, peak_quantile))
+
+            candidate_channels: List[np.ndarray] = []
+            candidate_starts: List[np.ndarray] = []
+            candidate_weights: List[np.ndarray] = []
+            for channel in range(self.config.channels):
+                energy_mask = np.ones(n_starts, dtype=bool)
+                if metric_mode in ("rms", "rms_and_peak"):
+                    rms_values = rms_cache[(channel, int(length))]
+                    energy_mask &= rms_values >= thresholds_rms[channel]
+                if metric_mode in ("peak", "rms_and_peak"):
+                    peak_values = peak_cache[(channel, int(length))]
+                    energy_mask &= peak_values >= thresholds_peak[channel]
+                mask = energy_mask & availability_by_channel[channel]
+                starts = np.flatnonzero(mask)
+                if starts.size == 0:
+                    continue
+                candidate_channels.append(
+                    np.full(starts.shape[0], int(channel), dtype=int)
+                )
+                candidate_starts.append(starts.astype(int))
+                if weighted_sampling:
+                    weights = np.ones(starts.shape[0], dtype=np.float64)
+                    if metric_mode in ("rms", "rms_and_peak"):
+                        rms_part = np.maximum(
+                            rms_cache[(channel, int(length))][starts]
+                            - thresholds_rms[channel],
+                            0.0,
+                        )
+                        weights += rms_part
+                    if metric_mode in ("peak", "rms_and_peak"):
+                        peak_part = np.maximum(
+                            peak_cache[(channel, int(length))][starts]
+                            - thresholds_peak[channel],
+                            0.0,
+                        )
+                        weights += peak_part
+                    candidate_weights.append(weights)
+
+            selected: Optional[SegmentPlan] = None
+            used_fallback = False
+            if len(candidate_starts) > 0:
+                all_channels = np.concatenate(candidate_channels)
+                all_starts = np.concatenate(candidate_starts)
+                selected_idx: int
+                if weighted_sampling and len(candidate_weights) > 0:
+                    all_weights = np.concatenate(candidate_weights).astype(np.float64)
+                    weight_sum = float(np.sum(all_weights))
+                    if weight_sum > 0.0:
+                        probs = all_weights / weight_sum
+                        selected_idx = int(rng.choice(np.arange(all_starts.size), p=probs))
+                    else:
+                        selected_idx = int(rng.integers(0, all_starts.size))
+                else:
+                    selected_idx = int(rng.integers(0, all_starts.size))
+                selected_channel = int(all_channels[selected_idx])
+                selected_start = int(all_starts[selected_idx])
+                selected_end = int(selected_start + int(length))
+                selected = SegmentPlan(
+                    start=selected_start,
+                    end=selected_end,
+                    length=int(length),
+                    channel=selected_channel,
+                )
+            elif fallback_mode == "uniform_segments":
+                selected = self._sample_uniform_slot(
+                    rng=rng,
+                    length=int(length),
+                    overlap_policy=overlap_policy,
+                    occupied_global=occupied_global,
+                    occupied_per_channel=occupied_per_channel,
+                )
+                used_fallback = selected is not None
+
+            if selected is None:
+                raise ValueError(
+                    "Failed to place an energy-aware segment without overlap "
+                    f"(length={length}, fallback={fallback_mode})."
+                )
+
+            self._occupy_slot(
+                selected.start,
+                selected.end,
+                selected.channel,
+                overlap_policy,
+                occupied_global,
+                occupied_per_channel,
+            )
+            channel_sq_prefix = sq_prefix_by_channel[selected.channel]
+            window_rms = self._window_rms(channel_sq_prefix, selected.start, selected.end)
+            window_peak = float(
+                np.max(abs_by_channel[selected.channel][selected.start : selected.end])
+            )
+            selected.attrs.update(
+                {
+                    "window_rms": float(window_rms),
+                    "window_peak": float(window_peak),
+                    "energy_metric": metric_mode,
+                    "energy_fallback": bool(used_fallback),
+                }
+            )
+            segments.append(selected)
+
+        segments.sort(
+            key=lambda segment: (segment.start, segment.channel, segment.length)
+        )
+        return segments
+
+    @staticmethod
+    def _available_start_mask(occupied: np.ndarray, length: int) -> np.ndarray:
+        if length <= 0:
+            return np.zeros(0, dtype=bool)
+        prefix = np.concatenate([[0], np.cumsum(occupied, dtype=np.int64)])
+        return (prefix[length:] - prefix[:-length]) == 0
+
+    @staticmethod
+    def _rms_values_for_channel_length(sq_prefix: np.ndarray, length: int) -> np.ndarray:
+        sums = sq_prefix[length:] - sq_prefix[:-length]
+        means = np.maximum(sums / float(length), 0.0)
+        return np.sqrt(means)
+
+    @staticmethod
+    def _peak_values_for_channel_length(abs_values: np.ndarray, length: int) -> np.ndarray:
+        windows = np.lib.stride_tricks.sliding_window_view(abs_values, window_shape=length)
+        return np.max(windows, axis=1)
+
+    @staticmethod
+    def _window_rms(sq_prefix: np.ndarray, start: int, end: int) -> float:
+        length = max(1, int(end - start))
+        sum_sq = float(sq_prefix[end] - sq_prefix[start])
+        mean_sq = max(sum_sq / float(length), 0.0)
+        return float(np.sqrt(mean_sq))
+
+    def _sample_uniform_slot(
+        self,
+        rng: np.random.Generator,
+        length: int,
+        overlap_policy: str,
+        occupied_global: np.ndarray,
+        occupied_per_channel: np.ndarray,
+    ) -> Optional[SegmentPlan]:
+        max_start = self.config.length - length
+        if max_start < 0:
+            return None
+        for _ in range(self.config.max_placement_attempts):
+            channel = int(rng.integers(0, self.config.channels))
+            start = int(rng.integers(0, max_start + 1))
+            end = start + length
+            if self._is_slot_available(
+                start,
+                end,
+                channel,
+                overlap_policy,
+                occupied_global,
+                occupied_per_channel,
+            ):
+                return SegmentPlan(start=start, end=end, length=length, channel=channel)
+
+        channel_order = rng.permutation(self.config.channels).tolist()
+        for channel in channel_order:
+            for start in range(max_start + 1):
+                end = start + length
+                if self._is_slot_available(
+                    start,
+                    end,
+                    channel,
+                    overlap_policy,
+                    occupied_global,
+                    occupied_per_channel,
+                ):
+                    return SegmentPlan(start=start, end=end, length=length, channel=channel)
+        return None
+
+    def _sample_segment_lengths_with_minima(
+        self,
+        rng: np.random.Generator,
+        target_points: int,
+        minimum_lengths: List[int],
+    ) -> List[int]:
+        """Sample segment lengths subject to per-segment minimum lengths."""
+        if len(minimum_lengths) == 0:
+            return []
+        minima = np.asarray([max(1, int(value)) for value in minimum_lengths], dtype=int)
+        total_min = int(np.sum(minima))
+        total_points = int(max(int(target_points), total_min))
+        total_points = int(min(total_points, self.config.length))
+        if total_points < total_min:
+            raise ValueError(
+                "Requested target points are infeasible under per-segment minimum lengths "
+                f"(target={total_points}, min_total={total_min})."
+            )
+        extra_points = int(total_points - total_min)
+        if extra_points > 0:
+            weights = rng.random(minima.shape[0]).astype(np.float64)
+            weight_sum = float(np.sum(weights))
+            if weight_sum <= 0.0:
+                weights = np.full(minima.shape[0], 1.0 / float(minima.shape[0]))
+            else:
+                weights = weights / weight_sum
+            extra = rng.multinomial(extra_points, weights)
+            minima = minima + extra
+        return [int(value) for value in minima.tolist()]
+
+    def _sample_trend_parameter_aware_segments(
+        self,
+        rng: np.random.Generator,
+        target_density: float,
+        overlap_policy: str,
+        planner_cfg: Mapping[str, Any],
+        anomaly_policy: Mapping[str, Any],
+        anomaly_parameter_template: Mapping[str, Any],
+        parameter_seed: int,
+        clean_values: Optional[np.ndarray] = None,
+    ) -> List[SegmentPlan]:
+        """Sample trend segments with parameter-driven per-segment length constraints."""
+        segment_count_range = _parse_pair_int(
+            anomaly_policy.get(
+                "segment_count_range",
+                planner_cfg.get("segment_count_range", self.config.segment_count_range),
+            ),
+            "segment_count_range",
+        )
+        if segment_count_range[0] > segment_count_range[1]:
+            segment_count_range = (segment_count_range[1], segment_count_range[0])
+        n_segments = int(
+            rng.integers(segment_count_range[0], segment_count_range[1] + 1)
+        )
+        if n_segments > self.config.length:
+            raise ValueError(
+                f"Requested n_segments={n_segments} exceeds series length={self.config.length}."
+            )
+
+        target_points = int(round(target_density * self.config.length))
+        target_points = max(target_points, n_segments)
+        target_points = min(target_points, self.config.length)
+
+        base_min_segment_length = int(
+            anomaly_policy.get(
+                "min_segment_length",
+                planner_cfg.get(
+                    "min_segment_length", self._minimum_segment_length("trend")
+                ),
+            )
+        )
+        sine_min_cycles = float(planner_cfg.get("sine_min_cycles", 0.30))
+        if sine_min_cycles <= 0.0:
+            raise ValueError("trend_parameter_aware_segments.sine_min_cycles must be > 0")
+        random_walk_min_segment_length = int(
+            max(1, int(planner_cfg.get("random_walk_min_segment_length", 8)))
+        )
+
+        per_segment_min_lengths: List[int] = []
+        per_segment_attrs: List[Dict[str, Any]] = []
+        for idx in range(n_segments):
+            params_rng = np.random.default_rng(
+                _derive_seed(parameter_seed, "trend-planner-params", str(idx))
+            )
+            trend_params = self._sanitize_anomaly_parameters(
+                "trend",
+                self._realize_parameters(anomaly_parameter_template, params_rng),
+            )
+            attrs: Dict[str, Any] = {"trend_params": copy.deepcopy(trend_params)}
+            min_segment_length = int(max(1, base_min_segment_length))
+            oscillation = trend_params.get("oscillation")
+            if isinstance(oscillation, Mapping):
+                osc_kind = str(oscillation.get("kind", "")).lower()
+                attrs["trend_oscillation_kind"] = osc_kind
+                if osc_kind == "sine":
+                    frequency = float(oscillation.get("frequency", 0.0))
+                    if frequency > 0.0:
+                        min_from_cycles = int(
+                            np.ceil((float(SAMPLING_F) * sine_min_cycles) / frequency)
+                        )
+                        min_segment_length = max(min_segment_length, min_from_cycles)
+                        attrs["trend_sine_frequency"] = float(frequency)
+                        attrs["trend_sine_min_cycles"] = float(sine_min_cycles)
+                elif osc_kind == "random-walk":
+                    min_segment_length = max(
+                        min_segment_length, random_walk_min_segment_length
+                    )
+                    attrs["trend_random_walk_min_segment_length"] = int(
+                        random_walk_min_segment_length
+                    )
+
+            min_segment_length = int(np.clip(min_segment_length, 1, self.config.length))
+            per_segment_min_lengths.append(min_segment_length)
+            attrs["trend_min_segment_length"] = int(min_segment_length)
+            per_segment_attrs.append(attrs)
+
+        dropped_segments: List[Dict[str, Any]] = []
+
+        def drop_largest_minimum(reason: str) -> None:
+            drop_idx = int(np.argmax(np.asarray(per_segment_min_lengths, dtype=int)))
+            dropped = int(per_segment_min_lengths.pop(drop_idx))
+            dropped_attrs = per_segment_attrs.pop(drop_idx)
+            dropped_kind = str(dropped_attrs.get("trend_oscillation_kind", "unknown"))
+            dropped_segments.append(
+                {
+                    "reason": reason,
+                    "min_length": dropped,
+                    "kind": dropped_kind,
+                }
+            )
+
+        while sum(per_segment_min_lengths) > self.config.length and len(
+            per_segment_min_lengths
+        ) > 1:
+            drop_largest_minimum("series_length_infeasibility")
+
+        while sum(per_segment_min_lengths) > target_points and len(
+            per_segment_min_lengths
+        ) > 1:
+            drop_largest_minimum("target_density_infeasibility")
+
+        if (
+            len(per_segment_min_lengths) == 1
+            and per_segment_min_lengths[0] > target_points
+        ):
+            original = int(per_segment_min_lengths[0])
+            per_segment_min_lengths[0] = int(target_points)
+            per_segment_attrs[0]["trend_min_segment_length_original"] = int(original)
+            per_segment_attrs[0]["trend_min_segment_length_relaxed"] = int(
+                target_points
+            )
+            self.logger.warning(
+                "Relaxing single trend minimum length to preserve target density "
+                "(original=%s, relaxed=%s).",
+                original,
+                target_points,
+            )
+
+        if dropped_segments:
+            reason_counts: Dict[str, int] = {}
+            for item in dropped_segments:
+                key = str(item["reason"])
+                reason_counts[key] = int(reason_counts.get(key, 0) + 1)
+            max_dropped = int(max(item["min_length"] for item in dropped_segments))
+            self.logger.warning(
+                "trend_parameter_aware_segments dropped segments to satisfy constraints "
+                "(dropped=%s, remaining=%s, target_points=%s, max_dropped_min=%s, reasons=%s).",
+                len(dropped_segments),
+                len(per_segment_min_lengths),
+                target_points,
+                max_dropped,
+                reason_counts,
+            )
+
+        target_points = min(target_points, self.config.length)
+        lengths = self._sample_segment_lengths_with_minima(
+            rng=rng,
+            target_points=target_points,
+            minimum_lengths=per_segment_min_lengths,
+        )
+
+        occupied_global = np.zeros(self.config.length, dtype=np.int8)
+        occupied_per_channel = np.zeros(
+            (self.config.channels, self.config.length), dtype=np.int8
+        )
+        segments: List[SegmentPlan] = []
+        for length, attrs in zip(lengths, per_segment_attrs):
+            selected = self._sample_uniform_slot(
+                rng=rng,
+                length=int(length),
+                overlap_policy=overlap_policy,
+                occupied_global=occupied_global,
+                occupied_per_channel=occupied_per_channel,
+            )
+            if selected is None:
+                raise ValueError(
+                    "Failed to place a trend_parameter_aware segment without overlap "
+                    f"(length={length})."
+                )
+            self._occupy_slot(
+                selected.start,
+                selected.end,
+                selected.channel,
+                overlap_policy,
+                occupied_global,
+                occupied_per_channel,
+            )
+            selected.attrs.update(copy.deepcopy(attrs))
+            segments.append(selected)
+
+        if clean_values is not None:
+            if clean_values.shape != (self.config.length, self.config.channels):
+                raise ValueError(
+                    "trend_parameter_aware_segments expected clean_values shape "
+                    f"({self.config.length}, {self.config.channels}), got {clean_values.shape}."
+                )
+            sq_prefix_by_channel = [
+                np.concatenate(
+                    [[0.0], np.cumsum(np.square(clean_values[:, channel]), dtype=np.float64)]
+                )
+                for channel in range(self.config.channels)
+            ]
+            abs_by_channel = [
+                np.abs(clean_values[:, channel]).astype(np.float64)
+                for channel in range(self.config.channels)
+            ]
+            for segment in segments:
+                channel = int(segment.channel)
+                window_rms = self._window_rms(
+                    sq_prefix_by_channel[channel], int(segment.start), int(segment.end)
+                )
+                window_peak = float(
+                    np.max(abs_by_channel[channel][int(segment.start) : int(segment.end)])
+                )
+                segment.attrs.update(
+                    {
+                        "window_rms": float(window_rms),
+                        "window_peak": float(window_peak),
+                    }
                 )
 
         segments.sort(
@@ -1973,9 +3058,13 @@ class TSDatasetGenerator:
             return int(self.config.min_segment_length_by_anomaly[anomaly_type])
         minimums = {
             "amplitude": 5,
+            "mean": 5,
+            "variance": 5,
+            "platform": 5,
             "pattern": 5,
             "pattern-shift": 5,
             "trend": 5,
+            "mode-correlation": 5,
         }
         return minimums.get(anomaly_type, 1)
 
@@ -2086,6 +3175,14 @@ class TSDatasetGenerator:
                     self._sanitize_anomaly_parameters(anomaly_type, resolved)
                 )
 
+        if anomaly_type == "trend" and planner_name == "trend_parameter_aware_segments":
+            for idx, segment in enumerate(segment_plan):
+                planned = segment.attrs.get("trend_params")
+                if isinstance(planned, Mapping):
+                    segment_params[idx] = self._sanitize_anomaly_parameters(
+                        "trend", copy.deepcopy(dict(planned))
+                    )
+
         if anomaly_type == "frequency" and planner_name == "period_locked_frequency":
             offsets_raw = (planner_cfg or {}).get("period_ratio_offsets", [-1, 1])
             if not isinstance(offsets_raw, (list, tuple)):
@@ -2140,6 +3237,68 @@ class TSDatasetGenerator:
                 segment_params[idx]["frequency_factor"] = float(
                     candidate_factors[chosen_idx]
                 )
+
+        if anomaly_type == "amplitude":
+            planner = dict(planner_cfg or {})
+            adaptive_strength = bool(planner.get("adaptive_strength", False))
+            min_effect_delta = max(0.0, float(planner.get("min_effect_delta", 0.0)))
+            factor_bounds_raw = planner.get("amplitude_factor_bounds")
+            factor_bounds: Optional[Tuple[float, float]] = None
+            if factor_bounds_raw is not None:
+                factor_bounds = _parse_pair(
+                    factor_bounds_raw, "segment_planner.amplitude_factor_bounds"
+                )
+                if factor_bounds[0] > factor_bounds[1]:
+                    factor_bounds = (factor_bounds[1], factor_bounds[0])
+
+            deadzone_raw = planner.get("amplitude_factor_deadzone")
+            deadzone: Optional[Tuple[float, float]] = None
+            if deadzone_raw is not None:
+                deadzone = _parse_pair(
+                    deadzone_raw, "segment_planner.amplitude_factor_deadzone"
+                )
+                if deadzone[0] > deadzone[1]:
+                    deadzone = (deadzone[1], deadzone[0])
+
+            for idx, segment in enumerate(segment_plan):
+                if "amplitude_factor" not in segment_params[idx]:
+                    continue
+                factor = float(segment_params[idx]["amplitude_factor"])
+                if adaptive_strength and min_effect_delta > 0.0:
+                    window_rms = float(segment.attrs.get("window_rms", 0.0))
+                    if window_rms > 1e-12:
+                        required_offset = min_effect_delta / window_rms
+                        current_offset = abs(factor - 1.0)
+                        if required_offset > current_offset:
+                            direction = -1.0 if factor < 1.0 else 1.0
+                            if current_offset <= 1e-12:
+                                direction = -1.0 if (idx % 2 == 0) else 1.0
+                            factor = 1.0 + direction * required_offset
+
+                if deadzone is not None and deadzone[0] <= factor <= deadzone[1]:
+                    if factor >= 1.0:
+                        factor = deadzone[1]
+                    else:
+                        factor = deadzone[0]
+
+                if factor_bounds is not None:
+                    factor = float(np.clip(factor, factor_bounds[0], factor_bounds[1]))
+                segment_params[idx]["amplitude_factor"] = float(factor)
+
+        if anomaly_type == "trend":
+            planner = dict(planner_cfg or {})
+            adaptive_strength = bool(planner.get("adaptive_strength", False))
+            min_effect_delta = max(0.0, float(planner.get("min_effect_delta", 0.0)))
+            for idx, segment in enumerate(segment_plan):
+                if adaptive_strength and min_effect_delta > 0.0:
+                    current_floor = float(segment_params[idx].get("min_effect_delta", 0.0))
+                    segment_params[idx]["min_effect_delta"] = float(
+                        max(current_floor, min_effect_delta)
+                    )
+                if "window_rms" in segment.attrs:
+                    segment_params[idx]["window_rms"] = float(segment.attrs["window_rms"])
+                if "window_peak" in segment.attrs:
+                    segment_params[idx]["window_peak"] = float(segment.attrs["window_peak"])
 
         return segment_params
 
@@ -2240,13 +3399,37 @@ class TSDatasetGenerator:
         self, anomaly_type: str, parameters: Mapping[str, Any]
     ) -> Dict[str, Any]:
         resolved = copy.deepcopy(dict(parameters))
+        if anomaly_type in {"amplitude", "trend"} and "transition_length" in resolved:
+            transition_length = int(resolved["transition_length"])
+            resolved["transition_length"] = max(0, transition_length)
+        if anomaly_type == "trend":
+            if "boundary_mode" in resolved:
+                resolved["boundary_mode"] = str(resolved["boundary_mode"]).lower()
+            if "envelope_kind" in resolved:
+                resolved["envelope_kind"] = str(resolved["envelope_kind"]).lower()
+            if "min_effect_delta" in resolved:
+                resolved["min_effect_delta"] = max(0.0, float(resolved["min_effect_delta"]))
         if anomaly_type == "pattern-shift":
             transition_window = int(resolved.get("transition_window", 10))
             transition_window = max(1, abs(transition_window))
             shift_by = int(resolved.get("shift_by", 0))
             shift_by = int(np.clip(shift_by, -transition_window, transition_window))
+            if shift_by == 0 and transition_window > 0:
+                shift_by = 1
             resolved["transition_window"] = transition_window
             resolved["shift_by"] = shift_by
+            if "crossfade_mode" in resolved:
+                resolved["crossfade_mode"] = str(resolved["crossfade_mode"]).lower()
+            if "min_effect_delta" in resolved:
+                resolved["min_effect_delta"] = max(0.0, float(resolved["min_effect_delta"]))
+        if anomaly_type == "platform" and "min_effect_delta" in resolved:
+            resolved["min_effect_delta"] = max(
+                0.0, float(resolved["min_effect_delta"])
+            )
+        if anomaly_type == "variance" and "min_effect_delta" in resolved:
+            resolved["min_effect_delta"] = max(
+                0.0, float(resolved["min_effect_delta"])
+            )
         if anomaly_type == "extremum":
             context_window = int(resolved.get("context_window", 10))
             resolved["context_window"] = max(1, abs(context_window))
@@ -2297,7 +3480,16 @@ class TSDatasetGenerator:
                 {"kind": "sine", "frequency": 2.0, "amplitude": 1.0},
             )
             trend = decode_trend_obj(copy.deepcopy(oscillation), anomaly_length)
-            return AnomalyKind(anomaly_type).create({PARAMETERS.TREND: trend})
+            trend_parameters: Dict[str, Any] = {PARAMETERS.TREND: trend}
+            if "transition_length" in raw:
+                trend_parameters["transition_length"] = int(raw["transition_length"])
+            if "boundary_mode" in raw:
+                trend_parameters["boundary_mode"] = str(raw["boundary_mode"])
+            if "envelope_kind" in raw:
+                trend_parameters["envelope_kind"] = str(raw["envelope_kind"])
+            if "min_effect_delta" in raw:
+                trend_parameters["min_effect_delta"] = float(raw["min_effect_delta"])
+            return AnomalyKind(anomaly_type).create(trend_parameters)
         return AnomalyKind(anomaly_type).create(copy.deepcopy(dict(parameters)))
 
     def _apply_anomalies(
@@ -2319,31 +3511,172 @@ class TSDatasetGenerator:
         for segment_idx, anomaly in enumerate(anomaly_objects):
             channel = anomaly.channel
             bo = channel_bos[channel]
+            planned_start = (
+                int(anomaly.exact_position)
+                if getattr(anomaly, "exact_position", None) is not None
+                else None
+            )
+            planned_end = (
+                planned_start + int(anomaly.anomaly_length)
+                if planned_start is not None
+                else None
+            )
+            before_window_with_variations = (
+                self._compose_channel_window_with_variations(
+                    base=base,
+                    bo=bo,
+                    channel=channel,
+                    start=planned_start,
+                    end=planned_end,
+                )
+                if planned_start is not None and planned_end is not None
+                else None
+            )
             protocol = anomaly.generate(ctx.to_anomaly(bo, used_positions[channel]))
+            original_segment = np.array(
+                base[protocol.start : protocol.end, channel], copy=True
+            )
+            expected_length = int(protocol.end - protocol.start)
+            effective_delta = np.zeros(expected_length, dtype=np.float64)
             if protocol.subsequences:
                 subsequence = np.vstack(protocol.subsequences).sum(axis=0)
-                expected_length = int(protocol.end - protocol.start)
                 subsequence = self._normalize_subsequence_length(
                     subsequence, expected_length
                 )
                 base[protocol.start : protocol.end, channel] = subsequence
-            labels[protocol.start : protocol.end, channel] = 1
+                if (
+                    planned_start == int(protocol.start)
+                    and planned_end == int(protocol.end)
+                    and before_window_with_variations is not None
+                    and before_window_with_variations.shape[0] == expected_length
+                ):
+                    after_window_with_variations = (
+                        self._compose_channel_window_with_variations(
+                            base=base,
+                            bo=bo,
+                            channel=channel,
+                            start=protocol.start,
+                            end=protocol.end,
+                        )
+                    )
+                    effective_delta = np.abs(
+                        after_window_with_variations - before_window_with_variations
+                    )
+                elif subsequence.shape[0] == original_segment.shape[0]:
+                    effective_delta = np.abs(subsequence - original_segment)
+            elif (
+                planned_start == int(protocol.start)
+                and planned_end == int(protocol.end)
+                and before_window_with_variations is not None
+                and before_window_with_variations.shape[0] == expected_length
+            ):
+                after_window_with_variations = (
+                    self._compose_channel_window_with_variations(
+                        base=base,
+                        bo=bo,
+                        channel=channel,
+                        start=protocol.start,
+                        end=protocol.end,
+                    )
+                )
+                effective_delta = np.abs(
+                    after_window_with_variations - before_window_with_variations
+                )
+
+            label_start, label_end = self._resolve_label_bounds_from_effect(
+                protocol_start=int(protocol.start),
+                protocol_end=int(protocol.end),
+                delta=effective_delta,
+                anomaly_type=anomaly_type,
+            )
+            labels[label_start:label_end, channel] = 1
             used_positions[channel].append((protocol.start, protocol.end))
             events.append(
                 {
-                    "start": int(protocol.start),
-                    "end": int(protocol.end),
+                    "start": int(label_start),
+                    "end": int(label_end),
                     "channel": int(channel),
                     "anomaly_type": anomaly_type,
                     "params": _to_builtin_types(
                         anomaly_parameters_per_segment[segment_idx]
                     ),
-                    "length": int(protocol.end - protocol.start),
+                    "length": int(label_end - label_start),
+                    "source_start": int(protocol.start),
+                    "source_end": int(protocol.end),
                 }
             )
 
         events.sort(key=lambda event: (event["start"], event["channel"], event["end"]))
         return labels, events
+
+    def _resolve_label_bounds_from_effect(
+        self,
+        protocol_start: int,
+        protocol_end: int,
+        delta: np.ndarray,
+        anomaly_type: str,
+    ) -> Tuple[int, int]:
+        if self.config.support_label_mode == "strict_segment":
+            return int(protocol_start), int(protocol_end)
+        if delta.size == 0:
+            return int(protocol_start), int(protocol_end)
+        if self.config.support_eps_mode == "relative":
+            peak_delta = float(np.max(delta))
+            epsilon = float(self.config.support_eps_value) * peak_delta
+        else:
+            epsilon = float(self.config.support_eps_value)
+        active = np.flatnonzero(delta > epsilon)
+        if active.size == 0:
+            return int(protocol_start), int(protocol_end)
+        start = int(protocol_start + active[0])
+        end = int(protocol_start + active[-1] + 1)
+        if anomaly_type != "extremum":
+            min_label_length = int(
+                max(1, self.config.min_effective_label_length_non_extremum)
+            )
+            if (end - start) < min_label_length:
+                return self._expand_effective_support_to_min_length(
+                    protocol_start=protocol_start,
+                    protocol_end=protocol_end,
+                    delta=delta,
+                    min_label_length=min_label_length,
+                )
+        return start, end
+
+    @staticmethod
+    def _expand_effective_support_to_min_length(
+        protocol_start: int,
+        protocol_end: int,
+        delta: np.ndarray,
+        min_label_length: int,
+    ) -> Tuple[int, int]:
+        source_length = max(0, int(protocol_end - protocol_start))
+        if source_length <= 0:
+            return int(protocol_start), int(protocol_end)
+        if source_length <= 1 or min_label_length <= 1:
+            end = min(int(protocol_start) + 1, int(protocol_end))
+            return int(protocol_start), int(end)
+
+        window = min(int(min_label_length), source_length)
+        if window <= 1:
+            end = min(int(protocol_start) + 1, int(protocol_end))
+            return int(protocol_start), int(end)
+
+        if delta.shape[0] != source_length:
+            resized = np.interp(
+                np.linspace(0.0, 1.0, source_length, endpoint=True),
+                np.linspace(0.0, 1.0, max(1, delta.shape[0]), endpoint=True),
+                delta if delta.shape[0] > 0 else np.zeros(1, dtype=np.float64),
+            ).astype(np.float64)
+        else:
+            resized = delta
+
+        # Pick the contiguous support window with maximum total effect.
+        scores = np.convolve(resized, np.ones(window, dtype=np.float64), mode="valid")
+        best_start_local = int(np.argmax(scores)) if scores.size > 0 else 0
+        start = int(protocol_start + best_start_local)
+        end = int(start + window)
+        return start, end
 
     def _normalize_subsequence_length(
         self, subsequence: np.ndarray, expected_length: int
@@ -2518,6 +3851,8 @@ class TSDatasetGenerator:
                 color="#1f77b4",
             )
             axis.set_ylabel(f"ch {channel}")
+            has_point_anomaly = False
+            has_selected_point = False
             for event in events:
                 event_channel = int(event["channel"])
                 if event_channel != channel:
@@ -2529,29 +3864,72 @@ class TSDatasetGenerator:
                 span_start = max(start, window_start)
                 span_end = min(end, window_end)
                 signature = (start, end, event_channel)
+                is_point_event = end - start <= 1
                 if selected_signature is not None and signature == selected_signature:
-                    axis.axvspan(
-                        span_start,
-                        span_end,
-                        color="#d62728",
-                        alpha=0.30,
-                        label="selected anomaly",
-                    )
+                    if is_point_event:
+                        has_selected_point = True
+                        axis.axvline(
+                            x=start,
+                            color="#d62728",
+                            alpha=0.85,
+                            linestyle="--",
+                            linewidth=1.5,
+                        )
+                    else:
+                        axis.axvspan(
+                            span_start,
+                            span_end,
+                            color="#d62728",
+                            alpha=0.30,
+                            label="selected anomaly",
+                        )
                 else:
-                    axis.axvspan(
-                        span_start,
-                        span_end,
+                    if is_point_event:
+                        has_point_anomaly = True
+                        axis.axvline(
+                            x=start,
+                            color="#ff7f0e",
+                            alpha=0.70,
+                            linestyle="--",
+                            linewidth=1.2,
+                        )
+                    else:
+                        axis.axvspan(
+                            span_start,
+                            span_end,
+                            color="#ff7f0e",
+                            alpha=0.20,
+                            label="anomaly",
+                        )
+            legend_handles: List[Any] = [
+                Patch(color="#ff7f0e", alpha=0.20, label="anomaly"),
+                Patch(color="#d62728", alpha=0.30, label="selected anomaly"),
+            ]
+            if has_point_anomaly:
+                legend_handles.append(
+                    Line2D(
+                        [0, 1],
+                        [0, 0],
                         color="#ff7f0e",
-                        alpha=0.20,
-                        label="anomaly",
+                        alpha=0.70,
+                        linestyle="--",
+                        linewidth=1.2,
+                        label="point anomaly",
                     )
-            axis.legend(
-                handles=[
-                    Patch(color="#ff7f0e", alpha=0.20, label="anomaly"),
-                    Patch(color="#d62728", alpha=0.30, label="selected anomaly"),
-                ],
-                loc="upper right",
-            )
+                )
+            if has_selected_point:
+                legend_handles.append(
+                    Line2D(
+                        [0, 1],
+                        [0, 0],
+                        color="#d62728",
+                        alpha=0.85,
+                        linestyle="--",
+                        linewidth=1.5,
+                        label="selected point anomaly",
+                    )
+                )
+            axis.legend(handles=legend_handles, loc="upper right")
         axes[-1].set_xlabel("time")
         fig.suptitle(title)
         fig.tight_layout()

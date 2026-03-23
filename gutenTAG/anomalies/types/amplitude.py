@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Type
+from typing import Optional, Type
 
 import numpy as np
 from scipy.stats import norm
@@ -12,12 +12,14 @@ from ...base_oscillations import Polynomial, Formula, RandomModeJump
 @dataclass
 class AnomalyAmplitudeParameters:
     amplitude_factor: float = 1.0
+    transition_length: Optional[int] = None
 
 
 class AnomalyAmplitude(BaseAnomaly):
     def __init__(self, parameters: AnomalyAmplitudeParameters):
         super().__init__()
         self.amplitude_factor = parameters.amplitude_factor
+        self.transition_length = parameters.transition_length
 
     def generate(self, anomaly_protocol: AnomalyProtocol) -> AnomalyProtocol:
         if anomaly_protocol.base_oscillation_kind in [
@@ -41,23 +43,35 @@ class AnomalyAmplitude(BaseAnomaly):
             )
             return anomaly_protocol
 
+        use_direct_factor = False
         if anomaly_protocol.creeping_length == 0:
             if length < 3:
                 amplitude_bell = np.ones(length, dtype=np.float64)
             else:
-                transition_length = int(round(length * 0.2))
-                transition_length = max(1, min(transition_length, length // 2))
-                plateau_length = max(0, length - 2 * transition_length)
-                plateau = np.ones(plateau_length)
-                start_transition = self._normalize_safe(
-                    norm.pdf(np.linspace(-3, 0, transition_length), scale=1.05)
-                )
-                end_transition = self._normalize_safe(
-                    norm.pdf(np.linspace(0, 3, transition_length), scale=1.05)
-                )
-                amplitude_bell = np.concatenate(
-                    [start_transition, plateau, end_transition]
-                )
+                if self.transition_length is None:
+                    transition_length = int(round(length * 0.2))
+                    transition_length = max(1, min(transition_length, length // 2))
+                else:
+                    transition_length = max(
+                        0, min(int(self.transition_length), length // 2)
+                    )
+                if transition_length == 0:
+                    use_direct_factor = True
+                    amplitude_bell = np.full(
+                        length, float(self.amplitude_factor), dtype=np.float64
+                    )
+                else:
+                    plateau_length = max(0, length - 2 * transition_length)
+                    plateau = np.ones(plateau_length)
+                    start_transition = self._normalize_safe(
+                        norm.pdf(np.linspace(-3, 0, transition_length), scale=1.05)
+                    )
+                    end_transition = self._normalize_safe(
+                        norm.pdf(np.linspace(0, 3, transition_length), scale=1.05)
+                    )
+                    amplitude_bell = np.concatenate(
+                        [start_transition, plateau, end_transition]
+                    )
         else:
             anomaly_length = max(0, length - anomaly_protocol.creeping_length)
             creeping_length = int(round(anomaly_length * 0.8))
@@ -75,19 +89,20 @@ class AnomalyAmplitude(BaseAnomaly):
 
         amplitude_bell = self._match_length(amplitude_bell, length)
 
-        if self.amplitude_factor < 1.0:
-            amplitude_bell = (
-                MinMaxScaler(feature_range=(1.0, 2.0 - self.amplitude_factor))
-                .fit_transform(amplitude_bell.reshape(-1, 1))
-                .reshape(-1)
-            )
-            amplitude_bell = amplitude_bell * -1 + 2
-        else:
-            amplitude_bell = (
-                MinMaxScaler(feature_range=(1.0, self.amplitude_factor))
-                .fit_transform(amplitude_bell.reshape(-1, 1))
-                .reshape(-1)
-            )
+        if not use_direct_factor:
+            if self.amplitude_factor < 1.0:
+                amplitude_bell = (
+                    MinMaxScaler(feature_range=(1.0, 2.0 - self.amplitude_factor))
+                    .fit_transform(amplitude_bell.reshape(-1, 1))
+                    .reshape(-1)
+                )
+                amplitude_bell = amplitude_bell * -1 + 2
+            else:
+                amplitude_bell = (
+                    MinMaxScaler(feature_range=(1.0, self.amplitude_factor))
+                    .fit_transform(amplitude_bell.reshape(-1, 1))
+                    .reshape(-1)
+                )
 
         subsequence = (
             anomaly_protocol.base_oscillation.timeseries[

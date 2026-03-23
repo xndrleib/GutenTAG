@@ -376,6 +376,141 @@ class TestTSDatasetGeneration(unittest.TestCase):
             manifest = TSDatasetGenerator.from_dict(config).run()
             self.assertIn("sine__trend__p00", manifest["generated_variants"])
 
+    def test_trend_parameter_aware_planner_enforces_min_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 3000
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.07]
+            config["anomaly_policy"]["density_tolerance"] = 0.03
+            config["anomaly_policy"]["segment_count_range"] = [8, 10]
+            config["anomaly_policy"]["segment_planner"] = {
+                "default": {"planner": "uniform_segments"},
+                "trend": {
+                    "planner": "trend_parameter_aware_segments",
+                    "sine_min_cycles": 0.30,
+                    "random_walk_min_segment_length": 8,
+                    "segment_count_range": [8, 10],
+                },
+            }
+            config["variants"]["anomaly_types"] = ["trend"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "trend": {
+                    "transition_length": 0,
+                    "boundary_mode": "inside_window_zero_endpoints",
+                    "envelope_kind": "sine2",
+                    "oscillation": {
+                        "distribution": "choice",
+                        "values": [
+                            {
+                                "kind": "sine",
+                                "frequency": {
+                                    "distribution": "uniform",
+                                    "low": 1.2,
+                                    "high": 2.0,
+                                },
+                                "amplitude": {
+                                    "distribution": "uniform",
+                                    "low": 0.4,
+                                    "high": 1.0,
+                                },
+                            }
+                        ],
+                    },
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__trend__p00", manifest["generated_variants"])
+            events_path = (
+                output_root
+                / "variants"
+                / "sine__trend__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+                / "events.json"
+            )
+            with events_path.open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                source_length = int(event["source_end"]) - int(event["source_start"])
+                params = event.get("params", {})
+                oscillation = params.get("oscillation", {})
+                self.assertEqual(str(oscillation.get("kind")), "sine")
+                frequency = float(oscillation.get("frequency"))
+                min_required = int(np.ceil((100.0 * 0.30) / frequency))
+                self.assertGreaterEqual(source_length, min_required)
+
+    def test_trend_parameter_aware_planner_preserves_target_density(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 2000
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.05]
+            config["anomaly_policy"]["density_tolerance"] = 0.01
+            config["anomaly_policy"]["segment_count_range"] = [12, 12]
+            config["anomaly_policy"]["segment_planner"] = {
+                "default": {"planner": "uniform_segments"},
+                "trend": {
+                    "planner": "trend_parameter_aware_segments",
+                    "sine_min_cycles": 0.30,
+                    "random_walk_min_segment_length": 8,
+                    "segment_count_range": [12, 12],
+                },
+            }
+            config["variants"]["anomaly_types"] = ["trend"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "trend": {
+                    "transition_length": 0,
+                    "boundary_mode": "inside_window_zero_endpoints",
+                    "envelope_kind": "sine2",
+                    "oscillation": {
+                        "distribution": "choice",
+                        "values": [
+                            {
+                                "kind": "sine",
+                                "frequency": 0.3,
+                                "amplitude": 0.8,
+                            }
+                        ],
+                    },
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__trend__p00", manifest["generated_variants"])
+            self.assertNotIn("sine__trend__p00", [item["variant_id"] for item in manifest["skipped_variants"]])
+
+            summary_path = (
+                output_root
+                / "variants"
+                / "sine__trend__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+                / "instance_summary.json"
+            )
+            with summary_path.open("r", encoding="utf-8") as handle:
+                summary = json.load(handle)
+
+            self.assertLessEqual(
+                abs(float(summary["achieved_density"]) - float(summary["target_density"])),
+                float(summary["density_tolerance"]) + 1e-12,
+            )
+            self.assertGreaterEqual(int(summary["n_segments"]), 1)
+
     def test_frequency_period_locked_profile_generates_period_aligned_segments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "dataset"
@@ -473,6 +608,791 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     float(anomalous[end - 1, channel]),
                     float(clean[end - 1, channel]),
                     places=8,
+                )
+
+    def test_frequency_variant_specific_density_tolerance_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 1200
+            config["dataset"]["channels"] = 3
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.10]
+            config["anomaly_policy"]["density_tolerance"] = 1e-6
+            config["anomaly_policy"]["segment_count_range"] = [2, 6]
+            config["variants"]["base_oscillations"] = ["sine"]
+            config["variants"]["anomaly_types"] = ["frequency"]
+            config["variants"]["profiles_per_pair"] = 1
+            config["variants"]["pair_profiles"] = {"sine__frequency": ["p01"]}
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["base_oscillation_overrides"] = {
+                "sine": {"frequency": 5.0}
+            }
+            config["variants"]["anomaly_overrides"] = {
+                "frequency": {"frequency_factor": 1.0}
+            }
+            config["variants"]["variant_overrides"] = {
+                "sine__frequency": {
+                    "anomaly_policy": {
+                        "density_tolerance": 0.02,
+                        "segment_count_range": [2, 6],
+                        "segment_planner": {
+                            "planner": "period_locked_frequency",
+                            "periods_per_segment_range": [2, 4],
+                            "align_to_period_start": True,
+                            "period_ratio_offsets": [-1, 1, 2],
+                            "frequency_factor_bounds": [0.7, 1.6],
+                        },
+                    }
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__frequency__p01", manifest["generated_variants"])
+            self.assertEqual(len(manifest["skipped_variants"]), 0)
+
+    def test_random_per_instance_base_parameters_are_split_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["splits"] = ["train", "val", "test"]
+            config["dataset"]["instances_per_split"] = 2
+            config["variants"]["base_parameter_policy"] = "random_per_instance"
+            config["variants"]["base_channel_parameter_policy"] = "random_per_instance"
+            config["variants"]["base_oscillation_overrides"] = {
+                "sine": {
+                    "frequency": {"distribution": "uniform", "low": 7.5, "high": 8.5},
+                    "amplitude": {"distribution": "uniform", "low": 0.8, "high": 1.2},
+                    "variance": {"distribution": "uniform", "low": 0.02, "high": 0.05},
+                }
+            }
+            config["variants"]["base_channel_overrides"] = {
+                "sine": {
+                    "phase": {
+                        "distribution": "uniform",
+                        "low": 0.0,
+                        "high": float(2.0 * np.pi),
+                    }
+                }
+            }
+            config["plot"]["enabled"] = False
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__mean__p00", manifest["generated_variants"])
+
+            def load_summary(split: str, index: int) -> Dict:
+                path = (
+                    output_root
+                    / "variants"
+                    / "sine__mean__p00"
+                    / split
+                    / "instances"
+                    / f"instance_{index:03d}"
+                    / "instance_summary.json"
+                )
+                with path.open("r", encoding="utf-8") as handle:
+                    return json.load(handle)
+
+            train_0 = load_summary("train", 0)
+            val_0 = load_summary("val", 0)
+            test_0 = load_summary("test", 0)
+            self.assertEqual(train_0["base_parameters"], val_0["base_parameters"])
+            self.assertEqual(train_0["base_parameters"], test_0["base_parameters"])
+            self.assertEqual(
+                train_0["base_parameters_per_channel"],
+                val_0["base_parameters_per_channel"],
+            )
+            self.assertEqual(
+                train_0["base_parameters_per_channel"],
+                test_0["base_parameters_per_channel"],
+            )
+
+            train_1 = load_summary("train", 1)
+            self.assertNotEqual(train_0["base_parameters"], train_1["base_parameters"])
+
+    def test_split_phase_shift_applies_deterministic_offsets_across_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["splits"] = ["train", "val", "test"]
+            config["dataset"]["instances_per_split"] = 1
+            config["variants"]["base_parameter_policy"] = "random_per_instance"
+            config["variants"]["base_channel_parameter_policy"] = "random_per_instance"
+            config["variants"]["base_oscillation_overrides"] = {
+                "sine": {"frequency": 8.0, "amplitude": 1.0, "variance": 0.03}
+            }
+            config["variants"]["base_channel_overrides"] = {
+                "sine": {"phase": 0.5, "amplitude": 1.0, "offset": 0.0, "variance": 0.03}
+            }
+            config["variants"]["split_phase_shift"] = {
+                "enabled": True,
+                "mode": "fixed_map",
+                "phase_modulo": float(2.0 * np.pi),
+                "values": {
+                    "train": 0.0,
+                    "val": float(2.0 * np.pi / 3.0),
+                    "test": float(4.0 * np.pi / 3.0),
+                },
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__mean__p00", manifest["generated_variants"])
+
+            def load_summary(split: str) -> Dict:
+                path = (
+                    output_root
+                    / "variants"
+                    / "sine__mean__p00"
+                    / split
+                    / "instances"
+                    / "instance_000"
+                    / "instance_summary.json"
+                )
+                with path.open("r", encoding="utf-8") as handle:
+                    return json.load(handle)
+
+            train = load_summary("train")
+            val = load_summary("val")
+            test = load_summary("test")
+
+            train_phase = float(train["base_parameters_per_channel"][0]["phase"])
+            val_phase = float(val["base_parameters_per_channel"][0]["phase"])
+            test_phase = float(test["base_parameters_per_channel"][0]["phase"])
+            modulo = float(2.0 * np.pi)
+
+            self.assertAlmostEqual(train_phase, 0.5, places=8)
+            self.assertAlmostEqual(
+                val_phase,
+                float(np.mod(train_phase + (2.0 * np.pi / 3.0), modulo)),
+                places=8,
+            )
+            self.assertAlmostEqual(
+                test_phase,
+                float(np.mod(train_phase + (4.0 * np.pi / 3.0), modulo)),
+                places=8,
+            )
+
+            self.assertFalse(bool(train["split_phase_shift"]["phase_shift_applied"]))
+            self.assertTrue(bool(val["split_phase_shift"]["phase_shift_applied"]))
+            self.assertTrue(bool(test["split_phase_shift"]["phase_shift_applied"]))
+
+    def test_split_phase_shift_requires_values_for_all_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["splits"] = ["train", "val", "test"]
+            config["variants"]["split_phase_shift"] = {
+                "enabled": True,
+                "mode": "fixed_map",
+                "phase_modulo": float(2.0 * np.pi),
+                "values": {"train": 0.0, "val": float(np.pi)},
+            }
+            with self.assertRaises(ValueError):
+                TSDatasetGenerator.from_dict(config)
+
+    def test_shared_noise_correlation_increases_pairwise_noise_correlation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.8}
+            generator = TSDatasetGenerator.from_dict(config)
+
+            class DummyBO:
+                def __init__(self, noise: np.ndarray) -> None:
+                    self.noise = noise
+
+            rng = np.random.default_rng(777)
+            bos = [DummyBO(rng.normal(0.0, 1.0, 4096)) for _ in range(4)]
+
+            def mean_pairwise_corr(items) -> float:
+                values = np.vstack([item.noise for item in items])
+                corr = np.corrcoef(values)
+                mask = ~np.eye(corr.shape[0], dtype=bool)
+                return float(np.mean(corr[mask]))
+
+            before = mean_pairwise_corr(bos)
+            generator._apply_shared_noise_correlation(bos, seed=2026)
+            after = mean_pairwise_corr(bos)
+            self.assertGreater(after, before + 0.2)
+
+    def test_amplitude_transition_length_zero_applies_nonzero_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 600
+            config["dataset"]["channels"] = 3
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.01
+            config["anomaly_policy"]["segment_count_range"] = [8, 10]
+            config["variants"]["anomaly_types"] = ["amplitude"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["anomaly_overrides"] = {
+                "amplitude": {"amplitude_factor": 1.8, "transition_length": 0}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__amplitude__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__amplitude__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+
+            for event in events:
+                start = int(event["start"])
+                end = int(event["end"])
+                channel = int(event["channel"])
+                delta = np.abs(anomalous[start:end, channel] - clean[start:end, channel])
+                self.assertGreater(
+                    float(delta.max()),
+                    1e-8,
+                    msg=f"Expected non-zero amplitude effect for event {event}",
+                )
+
+    def test_energy_aware_amplitude_segments_land_in_high_energy_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 600
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["anomaly_policy"]["segment_planner"] = {
+                "default": {"planner": "uniform_segments"},
+                "amplitude": {
+                    "planner": "energy_aware_segments",
+                    "energy_metric": "rms",
+                    "rms_quantile": 0.80,
+                    "weighted_sampling": False,
+                    "fallback": "error",
+                    "segment_count_range": [4, 4],
+                },
+            }
+            config["variants"]["anomaly_types"] = ["amplitude"]
+            config["variants"]["base_oscillation_overrides"] = {"sine": {"frequency": 2.0}}
+            config["variants"]["anomaly_overrides"] = {
+                "amplitude": {"amplitude_factor": 1.8, "transition_length": 0}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__amplitude__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__amplitude__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+
+            channel_values = clean[:, 0]
+            sq_prefix = np.concatenate([[0.0], np.cumsum(np.square(channel_values))])
+            for event in events:
+                start = int(event["source_start"])
+                end = int(event["source_end"])
+                length = max(1, end - start)
+                sums = sq_prefix[length:] - sq_prefix[:-length]
+                rms_values = np.sqrt(np.maximum(sums / float(length), 0.0))
+                threshold = float(np.quantile(rms_values, 0.80))
+                event_rms = float(
+                    np.sqrt(
+                        max(
+                            float(sq_prefix[end] - sq_prefix[start]) / float(length),
+                            0.0,
+                        )
+                    )
+                )
+                self.assertGreaterEqual(event_rms + 1e-10, threshold)
+
+    def test_bounded_trend_has_no_outside_label_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 700
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.08]
+            config["anomaly_policy"]["density_tolerance"] = 0.05
+            config["anomaly_policy"]["segment_count_range"] = [6, 8]
+            config["variants"]["anomaly_types"] = ["trend"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "trend": {
+                    "transition_length": 0,
+                    "boundary_mode": "inside_window_zero_endpoints",
+                    "envelope_kind": "sine2",
+                    "oscillation": {
+                        "distribution": "choice",
+                        "values": [
+                            {"kind": "sine", "frequency": 0.2, "amplitude": 0.8},
+                            {"kind": "random-walk", "smoothing": 0.01, "amplitude": 0.6},
+                        ],
+                    },
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__trend__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__trend__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            labels = pd.read_csv(instance_dir / "labels_pointwise.csv").to_numpy(dtype=np.int8)
+            delta = np.abs(anomalous - clean)
+            outside_delta = delta[labels == 0]
+            self.assertLess(float(np.max(outside_delta)), 1e-8)
+
+    def test_trend_min_effect_delta_is_enforced_without_resampling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 800
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["anomaly_policy"]["segment_planner"] = {
+                "default": {"planner": "uniform_segments"},
+                "trend": {
+                    "planner": "trend_parameter_aware_segments",
+                    "segment_count_range": [5, 6],
+                    "min_segment_length": 12,
+                    "sine_min_cycles": 0.25,
+                    "random_walk_min_segment_length": 12,
+                    "adaptive_strength": True,
+                    "min_effect_delta": 0.14,
+                },
+            }
+            config["variants"]["anomaly_types"] = ["trend"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "trend": {
+                    "transition_length": 0,
+                    "boundary_mode": "inside_window_zero_endpoints",
+                    "envelope_kind": "sine2",
+                    "oscillation": {
+                        "kind": "random-walk",
+                        "smoothing": 0.02,
+                        "amplitude": 0.05,
+                    },
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__trend__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__trend__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+
+            for event in events:
+                start = int(event["source_start"])
+                end = int(event["source_end"])
+                channel = int(event["channel"])
+                delta = np.abs(anomalous[start:end, channel] - clean[start:end, channel])
+                self.assertGreaterEqual(
+                    float(delta.max()),
+                    0.139,
+                    msg=f"Trend effect floor was not met for event {event}",
+                )
+
+    def test_trend_effective_support_trims_zero_edges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 700
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.07]
+            config["anomaly_policy"]["density_tolerance"] = 0.03
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["anomaly_policy"]["support_label_mode"] = "effective_support"
+            config["anomaly_policy"]["support_eps_mode"] = "relative"
+            config["anomaly_policy"]["support_eps_value"] = 0.05
+            config["variants"]["anomaly_types"] = ["trend"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "trend": {
+                    "transition_length": 0,
+                    "boundary_mode": "inside_window_zero_endpoints",
+                    "envelope_kind": "sine2",
+                    "oscillation": {
+                        "kind": "random-walk",
+                        "smoothing": 0.02,
+                        "amplitude": 0.5,
+                    },
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__trend__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__trend__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                self.assertGreater(
+                    int(event["start"]),
+                    int(event["source_start"]),
+                    msg=f"Expected left-edge shrink for trend event: {event}",
+                )
+                self.assertLess(
+                    int(event["end"]),
+                    int(event["source_end"]),
+                    msg=f"Expected right-edge shrink for trend event: {event}",
+                )
+
+    def test_pattern_shift_min_effect_delta_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 800
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["anomaly_policy"]["support_label_mode"] = "effective_support"
+            config["anomaly_policy"]["support_eps_mode"] = "relative"
+            config["anomaly_policy"]["support_eps_value"] = 0.05
+            config["variants"]["anomaly_types"] = ["pattern-shift"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "pattern-shift": {
+                    "transition_window": 8,
+                    "shift_by": 1,
+                    "crossfade_mode": "cosine",
+                    "min_effect_delta": 0.08,
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__pattern-shift__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__pattern-shift__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+
+            for event in events:
+                start = int(event["source_start"])
+                end = int(event["source_end"])
+                channel = int(event["channel"])
+                delta = np.abs(anomalous[start:end, channel] - clean[start:end, channel])
+                self.assertGreaterEqual(
+                    float(delta.max()),
+                    0.079,
+                    msg=f"Pattern-shift effect floor was not met for event {event}",
+                )
+
+    def test_pattern_min_effect_delta_is_enforced_for_ecg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 1200
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["variants"]["base_oscillations"] = ["ecg"]
+            config["variants"]["anomaly_types"] = ["pattern"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "pattern": {
+                    "sinusoid_k": 10.0,
+                    "min_effect_delta": 0.08,
+                    "adaptive_blend": True,
+                    "blend_strength": 1.0,
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("ecg__pattern__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "ecg__pattern__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+
+            for event in events:
+                start = int(event["source_start"])
+                end = int(event["source_end"])
+                channel = int(event["channel"])
+                delta = np.abs(anomalous[start:end, channel] - clean[start:end, channel])
+                self.assertGreaterEqual(
+                    float(delta.max()),
+                    0.079,
+                    msg=f"Pattern effect floor was not met for ECG event {event}",
+                )
+
+    def test_effective_support_enforces_min_non_extremum_label_length(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 800
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["anomaly_policy"]["support_label_mode"] = "effective_support"
+            config["anomaly_policy"]["support_eps_mode"] = "relative"
+            config["anomaly_policy"]["support_eps_value"] = 0.05
+            config["anomaly_policy"]["min_effective_label_length_non_extremum"] = 2
+            config["variants"]["anomaly_types"] = ["pattern-shift"]
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["anomaly_overrides"] = {
+                "pattern-shift": {
+                    "transition_window": 6,
+                    "shift_by": 1,
+                    "crossfade_mode": "cosine",
+                    "min_effect_delta": 0.08,
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__pattern-shift__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__pattern-shift__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                self.assertGreaterEqual(
+                    int(event["length"]),
+                    2,
+                    msg=f"Expected non-extremum support length >=2: {event}",
+                )
+
+    def test_non_extremum_min_label_length_does_not_affect_extremum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 600
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.03
+            config["anomaly_policy"]["support_label_mode"] = "effective_support"
+            config["anomaly_policy"]["support_eps_mode"] = "relative"
+            config["anomaly_policy"]["support_eps_value"] = 0.05
+            config["anomaly_policy"]["min_effective_label_length_non_extremum"] = 3
+            config["anomaly_policy"]["segment_planner"] = {
+                "default": {"planner": "uniform_segments"},
+                "extremum": {
+                    "planner": "point_events_from_density",
+                    "density_range": [0.05, 0.06],
+                    "unique_timestamps": True,
+                },
+            }
+            config["variants"]["anomaly_types"] = ["extremum"]
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__extremum__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__extremum__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                self.assertEqual(
+                    int(event["length"]),
+                    1,
+                    msg=f"Expected extremum to remain point-wise: {event}",
+                )
+
+    def test_platform_min_effect_delta_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 800
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["variants"]["base_oscillations"] = ["square"]
+            config["variants"]["anomaly_types"] = ["platform"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["anomaly_overrides"] = {
+                "platform": {"value": 0.0, "min_effect_delta": 0.2}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("square__platform__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "square__platform__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                start = int(event["source_start"])
+                end = int(event["source_end"])
+                channel = int(event["channel"])
+                delta = np.abs(anomalous[start:end, channel] - clean[start:end, channel])
+                self.assertGreaterEqual(
+                    float(delta.max()),
+                    0.199,
+                    msg=f"Platform effect floor was not met for event {event}",
+                )
+
+    def test_variance_min_effect_delta_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 900
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [5, 6]
+            config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
+                "variance": 8
+            }
+            config["variants"]["base_oscillations"] = ["cosine"]
+            config["variants"]["anomaly_types"] = ["variance"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["anomaly_overrides"] = {
+                "variance": {"variance": 0.05, "min_effect_delta": 0.12}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("cosine__variance__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "cosine__variance__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                start = int(event["source_start"])
+                end = int(event["source_end"])
+                channel = int(event["channel"])
+                delta = np.abs(anomalous[start:end, channel] - clean[start:end, channel])
+                self.assertGreaterEqual(
+                    float(delta.max()),
+                    0.119,
+                    msg=f"Variance effect floor was not met for event {event}",
                 )
 
 
