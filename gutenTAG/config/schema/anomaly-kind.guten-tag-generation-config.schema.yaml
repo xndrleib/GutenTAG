@@ -11,6 +11,7 @@ properties:
     type: string
     enum:
       - amplitude
+      - correlation-flip
       - covariance-change
       - channel-rewiring
       - extremum
@@ -29,6 +30,7 @@ oneOf:
   - $ref: "#/definitions/extremum-params"
   - $ref: "#/definitions/frequency-params"
   - $ref: "#/definitions/mean-params"
+  - $ref: "#/definitions/correlation-flip-params"
   - $ref: "#/definitions/covariance-change-params"
   - $ref: "#/definitions/channel-rewiring-params"
   - $ref: "#/definitions/lag-synchronization-params"
@@ -50,6 +52,19 @@ oneOf:
       additionalProperties: false
 
 definitions:
+  correlation-flip-params:
+    required:
+      - kind
+    properties:
+      kind:
+        const: correlation-flip
+      target_correlation:
+        type: number
+        description: Target signed correlation with the anchor channel inside the source window.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+    additionalProperties: false
   covariance-change-params:
     required:
       - kind

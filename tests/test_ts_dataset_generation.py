@@ -1699,6 +1699,10 @@ class TestTSDatasetGeneration(unittest.TestCase):
                 "base": "sine",
                 "override": {"coupling_strength": 0.95, "transition_length": 6},
             },
+            "correlation-flip": {
+                "base": "sine",
+                "override": {"target_correlation": -0.85, "transition_length": 6},
+            },
             "channel-rewiring": {
                 "base": "sine",
                 "override": {"rotation_degrees": 25, "transition_length": 6},
@@ -1810,6 +1814,54 @@ class TestTSDatasetGeneration(unittest.TestCase):
             anom_corr = np.corrcoef(anomalous[source_start:source_end, channels].T)[0, 1]
             self.assertGreater(abs(float(anom_corr) - float(clean_corr)), 0.15)
             self.assertEqual(event["anomaly_object"], "shared_noise_coupling_change")
+            self.assertEqual(event["purity_hint"], "multivariate_preferred")
+
+    def test_correlation_flip_changes_local_correlation_sign(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 900
+            config["dataset"]["channels"] = 4
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["variants"]["base_oscillations"] = ["sine"]
+            config["variants"]["anomaly_types"] = ["correlation-flip"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.45}
+            config["variants"]["anomaly_overrides"] = {
+                "correlation-flip": {"target_correlation": -0.9, "transition_length": 6}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__correlation-flip__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__correlation-flip__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(dtype=np.float64)
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+
+            event = events[0]
+            channels = [int(ch) for ch in event["group_channels"]]
+            source_start = int(event["source_start"])
+            source_end = int(event["source_end"])
+            clean_corr = float(np.corrcoef(clean[source_start:source_end, channels].T)[0, 1])
+            anom_corr = float(
+                np.corrcoef(anomalous[source_start:source_end, channels].T)[0, 1]
+            )
+            self.assertGreater(clean_corr, 0.10)
+            self.assertLess(anom_corr, -0.10)
+            self.assertEqual(event["anomaly_object"], "pair_correlation_flip")
             self.assertEqual(event["purity_hint"], "multivariate_preferred")
 
     def test_shared_factor_break_reduces_local_correlation(self) -> None:

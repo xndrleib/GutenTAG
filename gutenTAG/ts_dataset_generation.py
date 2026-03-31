@@ -56,6 +56,7 @@ DEFAULT_BASE_OVERRIDES: Dict[str, Dict[str, Any]] = {
 DEFAULT_ANOMALY_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "amplitude": {"amplitude_factor": 2.0},
     "channel-rewiring": {"rotation_degrees": 25.0, "transition_length": 8},
+    "correlation-flip": {"target_correlation": -0.85, "transition_length": 8},
     "covariance-change": {"coupling_strength": -0.9, "transition_length": 8},
     "frequency": {"frequency_factor": 2.0},
     "lag-synchronization": {"lag_steps": 6, "transition_length": 8},
@@ -79,6 +80,7 @@ ANOMALIES_INCOMPATIBLE_WITH_DENSITY_POLICY: Tuple[str, ...] = ("extremum",)
 GROUP_LEVEL_ANOMALY_TYPES = frozenset(
     {
         "mode-correlation",
+        "correlation-flip",
         "covariance-change",
         "channel-rewiring",
         "lag-synchronization",
@@ -3365,6 +3367,7 @@ class TSDatasetGenerator:
         minimums = {
             "amplitude": 5,
             "channel-rewiring": 8,
+            "correlation-flip": 8,
             "covariance-change": 8,
             "shared-factor-break": 8,
             "mean": 5,
@@ -3387,6 +3390,7 @@ class TSDatasetGenerator:
         if anomaly_type == "mode-correlation":
             special.setdefault("channel_policy", "paired-random")
         elif anomaly_type in {
+            "correlation-flip",
             "covariance-change",
             "channel-rewiring",
             "lag-synchronization",

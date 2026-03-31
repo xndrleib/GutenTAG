@@ -30,6 +30,7 @@ class BASE_OSCILLATION_NAMES:
 
 class ANOMALY_TYPE_NAMES:
     AMPLITUDE = "amplitude"
+    CORRELATION_FLIP = "correlation-flip"
     COVARIANCE_CHANGE = "covariance-change"
     CHANNEL_REWIRING = "channel-rewiring"
     EXTREMUM = "extremum"

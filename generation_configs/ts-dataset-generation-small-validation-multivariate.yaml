@@ -38,6 +38,9 @@ anomaly_policy:
     covariance-change:
       channel_policy: paired-random
       min_segment_length: 8
+    correlation-flip:
+      channel_policy: paired-random
+      min_segment_length: 8
     channel-rewiring:
       channel_policy: paired-random
       min_segment_length: 8
@@ -52,6 +55,7 @@ anomaly_policy:
     pattern-shift: 6
     mode-correlation: 8
     covariance-change: 8
+    correlation-flip: 8
     channel-rewiring: 8
     lag-synchronization: 10
     shared-factor-break: 8
@@ -65,6 +69,7 @@ variants:
     - pattern
     - pattern-shift
     - mode-correlation
+    - correlation-flip
     - covariance-change
     - channel-rewiring
     - lag-synchronization
@@ -155,6 +160,9 @@ variants:
     mode-correlation: {}
     covariance-change:
       coupling_strength: -0.95
+      transition_length: 8
+    correlation-flip:
+      target_correlation: -0.9
       transition_length: 8
     channel-rewiring:
       rotation_degrees: 25

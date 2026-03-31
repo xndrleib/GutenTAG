@@ -7,6 +7,7 @@ import numpy as np
 
 from ..anomalies.types import BaseAnomaly
 from ..base_oscillations import RandomModeJump
+from .correlation_geometry import correlation_flip_window
 from .event_metadata import build_event_record
 from .multivariate_ops import (
     break_shared_factor_window,
@@ -51,6 +52,18 @@ def apply_group_anomaly(
         )
     if anomaly_type == "covariance-change":
         return _apply_covariance_change_group(
+            group_indices=group_indices,
+            segment_plan=segment_plan,
+            base=base,
+            channel_bos=channel_bos,
+            labels=labels,
+            used_positions=used_positions,
+            anomaly_type=anomaly_type,
+            anomaly_parameters_per_segment=anomaly_parameters_per_segment,
+            runtime=runtime,
+        )
+    if anomaly_type == "correlation-flip":
+        return _apply_correlation_flip_group(
             group_indices=group_indices,
             segment_plan=segment_plan,
             base=base,
@@ -211,6 +224,111 @@ def _apply_mode_correlation_group(
                     "anchor_channel": int(anchor_channel),
                     "flipped_channels": [int(ch) for ch in flipped_channels],
                     "mode_change_aligned": bool(mode_change_aligned),
+                },
+            )
+        )
+    return events
+
+
+def _apply_correlation_flip_group(
+    *,
+    group_indices: List[int],
+    segment_plan: List[Any],
+    base: np.ndarray,
+    channel_bos: List[Any],
+    labels: np.ndarray,
+    used_positions: Dict[int, List[Tuple[int, int]]],
+    anomaly_type: str,
+    anomaly_parameters_per_segment: List[Dict[str, Any]],
+    runtime: GroupAnomalyRuntime,
+) -> List[Dict[str, Any]]:
+    if len(group_indices) == 0:
+        return []
+    (
+        _,
+        source_start,
+        source_end,
+        group_id,
+        group_channels,
+        segment_idx_by_channel,
+    ) = _group_common(group_indices, segment_plan)
+    if source_end <= source_start or len(group_channels) < 2:
+        return []
+    anchor_channel = int(group_channels[0])
+    target_channels = [int(ch) for ch in group_channels[1:]]
+    anchor_window = runtime.compose_window(
+        base=base,
+        bo=channel_bos[int(anchor_channel)],
+        channel=int(anchor_channel),
+        start=source_start,
+        end=source_end,
+    )
+    events: List[Dict[str, Any]] = []
+    for channel in target_channels:
+        segment_idx = int(segment_idx_by_channel[int(channel)])
+        params = anomaly_parameters_per_segment[int(segment_idx)]
+        target_correlation_raw = params.get("target_correlation", -0.85)
+        target_correlation = (
+            None if target_correlation_raw is None else float(target_correlation_raw)
+        )
+        transition_length = int(params.get("transition_length", 8))
+        before_window = runtime.compose_window(
+            base=base,
+            bo=channel_bos[int(channel)],
+            channel=int(channel),
+            start=source_start,
+            end=source_end,
+        )
+        candidate = correlation_flip_window(
+            reference=before_window,
+            anchor=anchor_window,
+            target_correlation=target_correlation,
+        )
+        candidate = BaseAnomaly.blend_with_reference(
+            candidate, before_window, transition_length
+        )
+        runtime.replace_window(
+            base=base,
+            bo=channel_bos[int(channel)],
+            channel=int(channel),
+            start=source_start,
+            end=source_end,
+            target_observed=candidate,
+        )
+        after_window = runtime.compose_window(
+            base=base,
+            bo=channel_bos[int(channel)],
+            channel=int(channel),
+            start=source_start,
+            end=source_end,
+        )
+        effective_delta = np.abs(after_window - before_window)
+        label_start, label_end = runtime.resolve_label_bounds(
+            protocol_start=source_start,
+            protocol_end=source_end,
+            delta=effective_delta,
+            anomaly_type=anomaly_type,
+        )
+        labels[label_start:label_end, int(channel)] = 1
+        used_positions[int(channel)].append((source_start, source_end))
+        events.append(
+            build_event_record(
+                start=int(label_start),
+                end=int(label_end),
+                channel=int(channel),
+                anomaly_type=anomaly_type,
+                group_id=int(group_id),
+                group_channels=[int(ch) for ch in group_channels],
+                affected_channels=[int(ch) for ch in target_channels],
+                anomaly_object="pair_correlation_flip",
+                channel_visible=False,
+                purity_hint="multivariate_preferred",
+                params=runtime.to_builtin(params),
+                source_start=int(source_start),
+                source_end=int(source_end),
+                extra={
+                    "anchor_channel": int(anchor_channel),
+                    "target_correlation": target_correlation,
                 },
             )
         )

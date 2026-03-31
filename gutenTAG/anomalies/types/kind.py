@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Any, Dict
 
 from .amplitude import AnomalyAmplitude
+from .correlation_flip import AnomalyCorrelationFlip
 from .channel_rewiring import AnomalyChannelRewiring
 from .covariance_change import AnomalyCovarianceChange
 from .extremum import AnomalyExtremum
@@ -28,6 +29,7 @@ class AnomalyKind(Enum):
     Platform = ANOMALY_TYPE_NAMES.PLATFORM
     Variance = ANOMALY_TYPE_NAMES.VARIANCE
     Amplitude = ANOMALY_TYPE_NAMES.AMPLITUDE
+    CorrelationFlip = ANOMALY_TYPE_NAMES.CORRELATION_FLIP
     Trend = ANOMALY_TYPE_NAMES.TREND
     ModeCorrelation = ANOMALY_TYPE_NAMES.MODE_CORRELATION
     CovarianceChange = ANOMALY_TYPE_NAMES.COVARIANCE_CHANGE
@@ -52,6 +54,8 @@ class AnomalyKind(Enum):
             return self._instantiate_anomaly(AnomalyPatternShift, parameters)
         elif self == AnomalyKind.Amplitude:
             return self._instantiate_anomaly(AnomalyAmplitude, parameters)
+        elif self == AnomalyKind.CorrelationFlip:
+            return self._instantiate_anomaly(AnomalyCorrelationFlip, parameters)
         elif self == AnomalyKind.Trend:
             return self._instantiate_anomaly(AnomalyTrend, parameters)
         elif self == AnomalyKind.ModeCorrelation:

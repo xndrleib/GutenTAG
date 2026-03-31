@@ -9,6 +9,7 @@ class Compatibility:
     combinations = pd.DataFrame(
         [
             [1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1],  # amplitude
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # correlation-flip
             [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # covariance-change
             [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # channel-rewiring
             [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # extremum
@@ -40,6 +41,7 @@ class Compatibility:
         ],
         index=[
             ANOMALY_TYPE_NAMES.AMPLITUDE,
+            ANOMALY_TYPE_NAMES.CORRELATION_FLIP,
             ANOMALY_TYPE_NAMES.COVARIANCE_CHANGE,
             ANOMALY_TYPE_NAMES.CHANNEL_REWIRING,
             ANOMALY_TYPE_NAMES.EXTREMUM,
