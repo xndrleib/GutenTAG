@@ -115,6 +115,32 @@ class BaseAnomaly(ABC):
             envelope[-1] = 0.0
         return envelope
 
+    @classmethod
+    def blend_with_reference(
+        cls,
+        candidate: np.ndarray,
+        reference: np.ndarray,
+        transition_length: Optional[int],
+    ) -> np.ndarray:
+        """Blend a synthesized candidate back into the clean reference window.
+
+        The returned series matches the clean reference exactly at both source
+        boundaries while preserving the interior anomaly shape.
+        """
+        ref = np.asarray(reference, dtype=np.float64)
+        cand = np.asarray(candidate, dtype=np.float64)
+        if ref.shape[0] == 0 or cand.shape[0] == 0:
+            return cand.astype(np.float64, copy=True)
+        n = min(ref.shape[0], cand.shape[0])
+        ref = ref[:n]
+        cand = cand[:n]
+        envelope = cls.build_symmetric_envelope(n, transition_length)
+        blended = ref + envelope * (cand - ref)
+        if blended.size > 0:
+            blended[0] = ref[0]
+            blended[-1] = ref[-1]
+        return blended.astype(np.float64)
+
     def turn_off_trend(self, anomaly_protocol):
         anomaly_protocol.base_oscillation.trend_series[
             anomaly_protocol.start : anomaly_protocol.end

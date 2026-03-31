@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from ._version import __version__
 from .anomalies import Anomaly, AnomalyKind, Position
-from .base_oscillations import BaseOscillation
+from .base_oscillations import BaseOscillation, RandomModeJump
 from .base_oscillations.utils.math_func_support import SAMPLING_F
 from .config.parser import decode_trend_obj
 from .utils.compatibility import Compatibility
@@ -544,7 +544,8 @@ class TSGeneratorConfig:
             )
         if self.placement_policy != "uniform":
             raise ValueError("Only placement_policy='uniform' is supported")
-        if self.channel_policy not in ("single-random", "paired-random", "all-channels"):
+        allowed_channel_policies = ("single-random", "paired-random", "all-channels")
+        if self.channel_policy not in allowed_channel_policies:
             raise ValueError(
                 "channel_policy must be one of {'single-random','paired-random','all-channels'}"
             )
@@ -643,15 +644,35 @@ class TSGeneratorConfig:
                 "period_locked_frequency",
                 "energy_aware_segments",
                 "trend_parameter_aware_segments",
+                "mode_boundary_segments",
             ):
                 raise ValueError(
                     "segment_planner planner must be one of "
                     "{'uniform_segments','point_events_from_density','period_locked_frequency',"
-                    "'energy_aware_segments','trend_parameter_aware_segments'}"
+                    "'energy_aware_segments','trend_parameter_aware_segments','mode_boundary_segments'}"
                 )
             if "density_range" in planner_cfg:
                 _parse_pair(
                     planner_cfg["density_range"], "segment_planner.density_range"
+                )
+        for anomaly_type, raw in self.special_anomaly_policies.items():
+            if not isinstance(raw, Mapping):
+                raise ValueError(
+                    f"special_anomaly_policies[{anomaly_type}] must be a mapping"
+                )
+            special_channel_policy = raw.get("channel_policy")
+            if special_channel_policy is None:
+                continue
+            special_channel_policy = str(special_channel_policy)
+            if special_channel_policy not in allowed_channel_policies:
+                raise ValueError(
+                    f"special_anomaly_policies[{anomaly_type}].channel_policy must be one of "
+                    "{'single-random','paired-random','all-channels'}"
+                )
+            if special_channel_policy == "paired-random" and self.channels < 2:
+                raise ValueError(
+                    f"special_anomaly_policies[{anomaly_type}].channel_policy='paired-random' "
+                    "requires dataset.channels >= 2"
                 )
         if self.support_label_mode not in ("strict_segment", "effective_support"):
             raise ValueError(
@@ -1453,6 +1474,9 @@ class TSDatasetGenerator:
                 planner_cfg.get("overlap_policy", self.config.overlap_policy),
             )
         )
+        active_channel_policy = str(
+            special_policy.get("channel_policy", self.config.channel_policy)
+        )
         segment_plan = self._sample_segment_plan(
             rng=plan_rng,
             target_density=target_density,
@@ -1591,7 +1615,7 @@ class TSDatasetGenerator:
             "effective_support_shrink_count": effective_support_shrink_count,
             "energy_fallback_count": energy_fallback_count,
             "per_channel_segment_counts": per_channel_counts,
-            "channel_policy": self.config.channel_policy,
+            "channel_policy": active_channel_policy,
             "overlap_policy": active_overlap_policy,
             "segment_planner": _to_builtin_types(planner_cfg),
             "variant_anomaly_policy": _to_builtin_types(special_policy),
@@ -1851,6 +1875,9 @@ class TSDatasetGenerator:
                 planner_cfg.get("overlap_policy", self.config.overlap_policy),
             )
         )
+        active_channel_policy = str(
+            special_policy.get("channel_policy", self.config.channel_policy)
+        )
         raw_segments: List[SegmentPlan]
 
         if planner_name == "point_events_from_density":
@@ -1860,7 +1887,9 @@ class TSDatasetGenerator:
                 overlap_policy=overlap_policy,
                 planner_cfg=planner_cfg,
             )
-            return self._apply_channel_policy_to_segments(raw_segments, rng)
+            return self._apply_channel_policy_to_segments(
+                raw_segments, rng, channel_policy=active_channel_policy
+            )
         if planner_name == "period_locked_frequency":
             if anomaly_type != "frequency":
                 raise ValueError(
@@ -1876,7 +1905,9 @@ class TSDatasetGenerator:
                 period_boundaries=period_boundaries,
                 period_boundaries_by_channel=period_boundaries_by_channel,
             )
-            return self._apply_channel_policy_to_segments(raw_segments, rng)
+            return self._apply_channel_policy_to_segments(
+                raw_segments, rng, channel_policy=active_channel_policy
+            )
         if planner_name == "energy_aware_segments":
             raw_segments = self._sample_energy_aware_segments(
                 rng=rng,
@@ -1887,7 +1918,9 @@ class TSDatasetGenerator:
                 anomaly_type=anomaly_type,
                 clean_values=clean_values,
             )
-            return self._apply_channel_policy_to_segments(raw_segments, rng)
+            return self._apply_channel_policy_to_segments(
+                raw_segments, rng, channel_policy=active_channel_policy
+            )
         if planner_name == "trend_parameter_aware_segments":
             if anomaly_type != "trend":
                 raise ValueError(
@@ -1908,7 +1941,22 @@ class TSDatasetGenerator:
                 parameter_seed=int(parameter_seed),
                 clean_values=clean_values,
             )
-            return self._apply_channel_policy_to_segments(raw_segments, rng)
+            return self._apply_channel_policy_to_segments(
+                raw_segments, rng, channel_policy=active_channel_policy
+            )
+        if planner_name == "mode_boundary_segments":
+            raw_segments = self._sample_mode_boundary_segments(
+                rng=rng,
+                target_density=target_density,
+                overlap_policy=overlap_policy,
+                planner_cfg=planner_cfg,
+                anomaly_policy=special_policy,
+                clean_values=clean_values,
+                anomaly_type=anomaly_type,
+            )
+            return self._apply_channel_policy_to_segments(
+                raw_segments, rng, channel_policy=active_channel_policy
+            )
 
         segment_count_range = _parse_pair_int(
             special_policy.get(
@@ -2026,13 +2074,19 @@ class TSDatasetGenerator:
         segments.sort(
             key=lambda segment: (segment.start, segment.channel, segment.length)
         )
-        return self._apply_channel_policy_to_segments(segments, rng)
+        return self._apply_channel_policy_to_segments(
+            segments, rng, channel_policy=active_channel_policy
+        )
 
     def _apply_channel_policy_to_segments(
-        self, segments: List[SegmentPlan], rng: np.random.Generator
+        self,
+        segments: List[SegmentPlan],
+        rng: np.random.Generator,
+        channel_policy: Optional[str] = None,
     ) -> List[SegmentPlan]:
         """Expand a single-channel segment plan according to channel policy."""
-        if self.config.channel_policy == "single-random":
+        active_channel_policy = str(channel_policy or self.config.channel_policy)
+        if active_channel_policy == "single-random":
             expanded: List[SegmentPlan] = []
             for group_id, segment in enumerate(segments):
                 attrs = copy.deepcopy(dict(segment.attrs))
@@ -2052,7 +2106,7 @@ class TSDatasetGenerator:
         expanded = []
         all_channels = list(range(self.config.channels))
         for group_id, segment in enumerate(segments):
-            if self.config.channel_policy == "all-channels":
+            if active_channel_policy == "all-channels":
                 group_channels = all_channels
             else:
                 remaining = [ch for ch in all_channels if ch != int(segment.channel)]
@@ -2900,6 +2954,206 @@ class TSDatasetGenerator:
         )
         return segments
 
+    def _sample_mode_boundary_segments(
+        self,
+        rng: np.random.Generator,
+        target_density: float,
+        overlap_policy: str,
+        planner_cfg: Mapping[str, Any],
+        anomaly_policy: Mapping[str, Any],
+        clean_values: Optional[np.ndarray],
+        anomaly_type: str,
+    ) -> List[SegmentPlan]:
+        """Sample segments aligned to realized mode-change boundaries.
+
+        This planner is intended for `mode-correlation` on `random-mode-jump`
+        bases so the relation anomaly does not degrade into a boundary seam.
+        """
+        if anomaly_type != "mode-correlation":
+            raise ValueError(
+                "mode_boundary_segments planner is only supported for anomaly_type='mode-correlation'."
+            )
+        if clean_values is None:
+            raise ValueError(
+                "mode_boundary_segments planner requires clean_values."
+            )
+        if clean_values.shape != (self.config.length, self.config.channels):
+            raise ValueError(
+                "mode_boundary_segments expected clean_values shape "
+                f"({self.config.length}, {self.config.channels}), got {clean_values.shape}."
+            )
+
+        def stable_sign(values: np.ndarray) -> np.ndarray:
+            signs = np.sign(np.asarray(values, dtype=np.float64)).astype(np.int8)
+            last = 1
+            for idx, value in enumerate(signs):
+                if value == 0:
+                    signs[idx] = last
+                else:
+                    last = int(value)
+            return signs
+
+        reference = np.asarray(clean_values[:, 0], dtype=np.float64)
+        sign_trace = stable_sign(reference)
+        change_boundaries = (
+            np.flatnonzero(sign_trace[1:] != sign_trace[:-1]).astype(int) + 1
+        )
+        change_boundaries = change_boundaries[
+            (change_boundaries > 0) & (change_boundaries < self.config.length)
+        ]
+        if change_boundaries.shape[0] < 2:
+            self.logger.warning(
+                "mode_boundary_segments found too few mode changes; falling back to uniform placement."
+            )
+            return self._sample_segment_plan(
+                rng=rng,
+                target_density=target_density,
+                anomaly_type=anomaly_type,
+                clean_values=clean_values,
+                anomaly_policy=_merge_dicts(anomaly_policy, {"channel_policy": "single-random"}),
+                planner_cfg={"planner": "uniform_segments"},
+            )
+
+        segment_count_range = _parse_pair_int(
+            anomaly_policy.get(
+                "segment_count_range",
+                planner_cfg.get("segment_count_range", self.config.segment_count_range),
+            ),
+            "segment_count_range",
+        )
+        if segment_count_range[0] > segment_count_range[1]:
+            segment_count_range = (segment_count_range[1], segment_count_range[0])
+        n_segments = int(
+            rng.integers(segment_count_range[0], segment_count_range[1] + 1)
+        )
+        target_points = int(round(target_density * self.config.length))
+        target_points = max(target_points, n_segments)
+        target_points = min(target_points, self.config.length)
+
+        min_segment_length = int(
+            anomaly_policy.get(
+                "min_segment_length",
+                planner_cfg.get(
+                    "min_segment_length", self._minimum_segment_length(anomaly_type)
+                ),
+            )
+        )
+        max_segments_for_min_length = max(1, target_points // max(1, min_segment_length))
+        if n_segments > max_segments_for_min_length:
+            n_segments = max_segments_for_min_length
+        lengths = self._sample_segment_lengths(
+            rng, target_points, n_segments, min_segment_length=min_segment_length
+        )
+
+        occupied_global = np.zeros(self.config.length, dtype=np.int8)
+        occupied_per_channel = np.zeros(
+            (self.config.channels, self.config.length), dtype=np.int8
+        )
+        segments: List[SegmentPlan] = []
+
+        for length in lengths:
+            placed = False
+            for _ in range(self.config.max_placement_attempts):
+                channel = int(rng.integers(0, self.config.channels))
+                start = int(change_boundaries[int(rng.integers(0, len(change_boundaries) - 1))])
+                end_candidates = change_boundaries[
+                    change_boundaries >= start + max(1, min_segment_length)
+                ]
+                if end_candidates.size == 0:
+                    continue
+                candidate_lengths = end_candidates - start
+                end = int(
+                    end_candidates[int(np.argmin(np.abs(candidate_lengths - int(length))))]
+                )
+                if not self._is_slot_available(
+                    start,
+                    end,
+                    channel,
+                    overlap_policy,
+                    occupied_global,
+                    occupied_per_channel,
+                ):
+                    continue
+                self._occupy_slot(
+                    start,
+                    end,
+                    channel,
+                    overlap_policy,
+                    occupied_global,
+                    occupied_per_channel,
+                )
+                segments.append(
+                    SegmentPlan(
+                        start=start,
+                        end=end,
+                        length=int(end - start),
+                        channel=channel,
+                        attrs={
+                            "planner": "mode_boundary_segments",
+                            "mode_change_aligned": True,
+                        },
+                    )
+                )
+                placed = True
+                break
+
+            if placed:
+                continue
+
+            channel_order = rng.permutation(self.config.channels).tolist()
+            for channel in channel_order:
+                for start in change_boundaries[:-1]:
+                    end_candidates = change_boundaries[
+                        change_boundaries >= int(start) + max(1, min_segment_length)
+                    ]
+                    if end_candidates.size == 0:
+                        continue
+                    candidate_lengths = end_candidates - int(start)
+                    end = int(end_candidates[int(np.argmin(np.abs(candidate_lengths - int(length))))])
+                    if not self._is_slot_available(
+                        int(start),
+                        end,
+                        int(channel),
+                        overlap_policy,
+                        occupied_global,
+                        occupied_per_channel,
+                    ):
+                        continue
+                    self._occupy_slot(
+                        int(start),
+                        end,
+                        int(channel),
+                        overlap_policy,
+                        occupied_global,
+                        occupied_per_channel,
+                    )
+                    segments.append(
+                        SegmentPlan(
+                            start=int(start),
+                            end=end,
+                            length=int(end - int(start)),
+                            channel=int(channel),
+                            attrs={
+                                "planner": "mode_boundary_segments",
+                                "mode_change_aligned": True,
+                            },
+                        )
+                    )
+                    placed = True
+                    break
+                if placed:
+                    break
+
+            if not placed:
+                raise ValueError(
+                    f"Failed to place a mode_boundary segment of target length {length}."
+                )
+
+        segments.sort(
+            key=lambda segment: (segment.start, segment.channel, segment.length)
+        )
+        return segments
+
     def _sample_point_event_segments(
         self,
         rng: np.random.Generator,
@@ -3136,8 +3390,12 @@ class TSDatasetGenerator:
     def _special_policy(self, anomaly_type: str) -> Dict[str, Any]:
         raw = self.config.special_anomaly_policies.get(anomaly_type, {})
         if isinstance(raw, Mapping):
-            return copy.deepcopy(dict(raw))
-        return {}
+            special = copy.deepcopy(dict(raw))
+        else:
+            special = {}
+        if anomaly_type == "mode-correlation":
+            special.setdefault("channel_policy", "paired-random")
+        return special
 
     def _resolve_segment_planner(
         self,
@@ -3464,9 +3722,20 @@ class TSDatasetGenerator:
         self, anomaly_type: str, parameters: Mapping[str, Any]
     ) -> Dict[str, Any]:
         resolved = copy.deepcopy(dict(parameters))
-        if anomaly_type in {"amplitude", "trend", "mean", "platform", "variance"} and "transition_length" in resolved:
+        if anomaly_type in {"amplitude", "trend", "mean", "platform", "variance", "pattern"} and "transition_length" in resolved:
             transition_length = int(resolved["transition_length"])
             resolved["transition_length"] = max(0, transition_length)
+        if anomaly_type == "pattern":
+            if "min_effect_delta" in resolved:
+                resolved["min_effect_delta"] = max(
+                    0.0, float(resolved["min_effect_delta"])
+                )
+            if "min_window_ptp" in resolved:
+                resolved["min_window_ptp"] = max(0.0, float(resolved["min_window_ptp"]))
+            if "adaptive_blend" in resolved:
+                resolved["adaptive_blend"] = bool(resolved["adaptive_blend"])
+            if "blend_strength" in resolved:
+                resolved["blend_strength"] = max(0.0, float(resolved["blend_strength"]))
         if anomaly_type == "trend":
             if "boundary_mode" in resolved:
                 resolved["boundary_mode"] = str(resolved["boundary_mode"]).lower()
@@ -3573,9 +3842,45 @@ class TSDatasetGenerator:
         used_positions: Dict[int, List[Tuple[int, int]]] = {
             channel: [] for channel in range(self.config.channels)
         }
+        processed_group_ids = set()
 
         for segment_idx, anomaly in enumerate(anomaly_objects):
             segment_metadata = segment_plan[segment_idx]
+            group_id = int(segment_metadata.attrs.get("group_id", segment_idx))
+            group_channels = [
+                int(ch)
+                for ch in segment_metadata.attrs.get(
+                    "group_channels", [int(segment_metadata.channel)]
+                )
+            ]
+            if (
+                anomaly_type == "mode-correlation"
+                and len(group_channels) > 1
+                and all(
+                    channel_bos[ch].get_base_oscillation_kind() == RandomModeJump.KIND
+                    for ch in group_channels
+                )
+            ):
+                if group_id in processed_group_ids:
+                    continue
+                processed_group_ids.add(group_id)
+                group_indices = [
+                    idx
+                    for idx, plan in enumerate(segment_plan)
+                    if int(plan.attrs.get("group_id", idx)) == group_id
+                ]
+                group_events = self._apply_mode_correlation_group(
+                    group_indices=group_indices,
+                    segment_plan=segment_plan,
+                    base=base,
+                    channel_bos=channel_bos,
+                    labels=labels,
+                    used_positions=used_positions,
+                    anomaly_type=anomaly_type,
+                    anomaly_parameters_per_segment=anomaly_parameters_per_segment,
+                )
+                events.extend(group_events)
+                continue
             channel = anomaly.channel
             bo = channel_bos[channel]
             planned_start = (
@@ -3682,6 +3987,103 @@ class TSDatasetGenerator:
 
         events.sort(key=lambda event: (event["start"], event["channel"], event["end"]))
         return labels, events
+
+    def _apply_mode_correlation_group(
+        self,
+        group_indices: List[int],
+        segment_plan: List[SegmentPlan],
+        base: np.ndarray,
+        channel_bos: List[Any],
+        labels: np.ndarray,
+        used_positions: Dict[int, List[Tuple[int, int]]],
+        anomaly_type: str,
+        anomaly_parameters_per_segment: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if len(group_indices) == 0:
+            return []
+        group_segments = [segment_plan[idx] for idx in group_indices]
+        source_start = int(min(segment.start for segment in group_segments))
+        source_end = int(max(segment.end for segment in group_segments))
+        if source_end <= source_start:
+            return []
+
+        group_id = int(group_segments[0].attrs.get("group_id", group_indices[0]))
+        group_channels = sorted(
+            {
+                int(ch)
+                for segment in group_segments
+                for ch in segment.attrs.get("group_channels", [int(segment.channel)])
+            }
+        )
+        segment_idx_by_channel = {
+            int(segment_plan[idx].channel): int(idx) for idx in group_indices
+        }
+        if len(group_channels) < 2:
+            return []
+        anchor_channel = int(group_channels[0])
+        flipped_channels = [int(ch) for ch in group_channels[1:]]
+        if len(flipped_channels) == 0:
+            return []
+
+        before_windows = {
+            int(channel): self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+            )
+            for channel in flipped_channels
+        }
+
+        for channel in flipped_channels:
+            base[source_start:source_end, channel] = (
+                -1.0 * np.asarray(base[source_start:source_end, channel], dtype=np.float64)
+            )
+
+        events: List[Dict[str, Any]] = []
+        mode_change_aligned = bool(
+            group_segments[0].attrs.get("mode_change_aligned", False)
+        )
+        for channel in flipped_channels:
+            segment_idx = int(segment_idx_by_channel[int(channel)])
+            after_window = self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+            )
+            effective_delta = np.abs(after_window - before_windows[int(channel)])
+            label_start, label_end = self._resolve_label_bounds_from_effect(
+                protocol_start=source_start,
+                protocol_end=source_end,
+                delta=effective_delta,
+                anomaly_type=anomaly_type,
+            )
+            labels[label_start:label_end, int(channel)] = 1
+            used_positions[int(channel)].append((source_start, source_end))
+            events.append(
+                {
+                    "start": int(label_start),
+                    "end": int(label_end),
+                    "channel": int(channel),
+                    "anomaly_type": anomaly_type,
+                    "group_id": int(group_id),
+                    "group_channels": [int(ch) for ch in group_channels],
+                    "params": _to_builtin_types(
+                        anomaly_parameters_per_segment[int(segment_idx)]
+                    ),
+                    "length": int(label_end - label_start),
+                    "source_start": int(source_start),
+                    "source_end": int(source_end),
+                    "anomaly_object": "relation_sign_flip",
+                    "anchor_channel": int(anchor_channel),
+                    "flipped_channels": [int(ch) for ch in flipped_channels],
+                    "mode_change_aligned": bool(mode_change_aligned),
+                }
+            )
+        return events
 
     def _resolve_label_bounds_from_effect(
         self,

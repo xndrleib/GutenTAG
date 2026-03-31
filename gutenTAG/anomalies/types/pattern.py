@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Type
+from typing import Optional, Type
 
 import numpy as np
 
@@ -18,6 +18,7 @@ class AnomalyPatternParameters:
     min_window_ptp: float = 0.0
     adaptive_blend: bool = False
     blend_strength: float = 1.0
+    transition_length: Optional[int] = None
 
 
 class AnomalyPattern(BaseAnomaly):
@@ -31,6 +32,7 @@ class AnomalyPattern(BaseAnomaly):
         self.min_window_ptp = max(0.0, float(parameters.min_window_ptp))
         self.adaptive_blend = bool(parameters.adaptive_blend)
         self.blend_strength = max(0.0, float(parameters.blend_strength))
+        self.transition_length = parameters.transition_length
 
     def generate(self, anomaly_protocol: AnomalyProtocol) -> AnomalyProtocol:
         def sinusoid_template(length: int, k: float) -> np.ndarray:
@@ -50,6 +52,9 @@ class AnomalyPattern(BaseAnomaly):
                 return candidate
             if candidate.shape[0] != reference.shape[0]:
                 return candidate
+            candidate = self.blend_with_reference(
+                candidate, reference, self.transition_length
+            )
             delta = candidate - reference
             max_delta = float(np.max(np.abs(delta)))
             min_required = max(self.min_effect_delta, 1e-10)
@@ -60,16 +65,29 @@ class AnomalyPattern(BaseAnomaly):
             scale = max(window_ptp / 2.0, self.min_window_ptp / 2.0, 1e-6)
             center = float(np.mean(reference))
             target = center + scale * template
+            target = self.blend_with_reference(
+                target, reference, self.transition_length
+            )
             target_delta = target - reference
             target_max_delta = float(np.max(np.abs(target_delta)))
             if target_max_delta <= 1e-12:
-                corrected = candidate.copy()
-                corrected[0] = corrected[0] + min_required
+                corrected = reference.astype(np.float64, copy=True)
+                if corrected.size == 1:
+                    corrected[0] = corrected[0] + min_required
+                    return corrected
+                center_idx = int(corrected.size // 2)
+                corrected[center_idx] = corrected[center_idx] + min_required
+                corrected[0] = reference[0]
+                corrected[-1] = reference[-1]
                 return corrected
             blend = float(self.blend_strength)
             if self.adaptive_blend and self.min_effect_delta > 0.0:
                 blend = max(blend, self.min_effect_delta / target_max_delta)
-            return reference + blend * target_delta
+            blended = reference + blend * target_delta
+            if blended.size > 0:
+                blended[0] = reference[0]
+                blended[-1] = reference[-1]
+            return blended
 
         if anomaly_protocol.base_oscillation_kind == CylinderBellFunnel.KIND:
             cbf = anomaly_protocol.base_oscillation

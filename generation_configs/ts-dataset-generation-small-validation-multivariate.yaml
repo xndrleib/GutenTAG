@@ -1,0 +1,147 @@
+generator:
+  output_root: data/ts_dataset_small_validation_multivariate
+  master_seed: 20260401
+  overwrite_output: true
+  log_level: INFO
+  on_variant_failure: skip
+
+dataset:
+  length: 800
+  channels: 4
+  splits: [val]
+  instances_per_split: 2
+
+anomaly_policy:
+  density_range: [0.05, 0.08]
+  density_tolerance: 0.03
+  segment_count_range: [4, 6]
+  placement_policy: uniform
+  channel_policy: single-random
+  overlap_policy: global
+  length_normalization: resample
+  support_label_mode: effective_support
+  support_eps_mode: relative
+  support_eps_value: 0.05
+  min_effective_label_length_non_extremum: 2
+  max_placement_attempts: 2500
+  skip_density_incompatible_variants: true
+  segment_planner:
+    default:
+      planner: uniform_segments
+    mode-correlation:
+      planner: mode_boundary_segments
+  special_anomaly_policies:
+    mode-correlation:
+      channel_policy: paired-random
+      density_tolerance: 0.10
+      min_segment_length: 8
+  min_segment_length_by_anomaly:
+    pattern: 6
+    pattern-shift: 6
+    mode-correlation: 8
+
+variants:
+  base_oscillations:
+    - square
+    - sawtooth
+    - random-mode-jump
+  anomaly_types:
+    - pattern
+    - pattern-shift
+    - mode-correlation
+  skip_base_oscillations: []
+  skip_anomaly_types: []
+  disabled_anomaly_types: []
+  profiles_per_pair: 1
+  pair_profiles: {}
+  base_parameter_policy: random_per_instance
+  base_channel_parameter_policy: random_per_instance
+  anomaly_parameter_policy: fixed_per_variant
+  base_channel_correlation:
+    shared_noise_weight: 0.25
+  base_oscillation_overrides:
+    square:
+      frequency:
+        distribution: uniform
+        low: 7.0
+        high: 9.0
+      amplitude:
+        distribution: uniform
+        low: 0.9
+        high: 1.1
+      variance:
+        distribution: uniform
+        low: 0.02
+        high: 0.04
+    sawtooth:
+      frequency:
+        distribution: uniform
+        low: 7.0
+        high: 9.0
+      amplitude:
+        distribution: uniform
+        low: 0.9
+        high: 1.1
+      variance:
+        distribution: uniform
+        low: 0.02
+        high: 0.04
+    random-mode-jump:
+      frequency:
+        distribution: int_uniform
+        low: 120
+        high: 180
+      variance:
+        distribution: uniform
+        low: 0.03
+        high: 0.05
+      random-seed:
+        distribution: int_uniform
+        low: 1
+        high: 500
+  base_channel_overrides:
+    square:
+      phase:
+        distribution: uniform
+        low: 0.0
+        high: 6.283185307179586
+    sawtooth:
+      phase:
+        distribution: uniform
+        low: 0.0
+        high: 6.283185307179586
+    random-mode-jump:
+      channel_diff:
+        distribution: uniform
+        low: 0.0
+        high: 0.0
+      channel_offset:
+        distribution: uniform
+        low: 0.9
+        high: 1.1
+  anomaly_overrides:
+    pattern:
+      sinusoid_k: 8.0
+      min_effect_delta: 0.12
+      min_window_ptp: 0.05
+      adaptive_blend: true
+      blend_strength: 1.0
+      transition_length: 8
+    pattern-shift:
+      shift_by: 4
+      transition_window: 8
+      crossfade_mode: cosine
+      min_effect_delta: 0.12
+    mode-correlation: {}
+
+plot:
+  enabled: true
+  dpi: 130
+  zoom_count: 4
+  zoom_margin: 36
+  zoom_margin_min: 18
+  zoom_margin_alpha: 0.6
+  zoom_fill_policy: repeat
+
+io:
+  csv_float_format: "%.8f"

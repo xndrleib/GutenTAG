@@ -82,6 +82,9 @@ class AnomalyPatternShift(BaseAnomaly):
                 shift_by = 1
 
             blended = build_shifted_subsequence(subsequence, shift_by, transition_window)
+            blended = self.blend_with_reference(
+                blended, subsequence, transition_window
+            )
 
             # Avoid degenerate cases where phase-shift produces an identical window.
             effect = float(np.max(np.abs(blended - subsequence)))
@@ -95,6 +98,9 @@ class AnomalyPatternShift(BaseAnomaly):
                     if candidate == shift_by:
                         continue
                     alt = build_shifted_subsequence(subsequence, candidate, transition_window)
+                    alt = self.blend_with_reference(
+                        alt, subsequence, transition_window
+                    )
                     alt_effect = float(np.max(np.abs(alt - subsequence)))
                     if alt_effect > 1e-10:
                         blended = alt
@@ -111,6 +117,9 @@ class AnomalyPatternShift(BaseAnomaly):
                         continue
                     alt = build_shifted_subsequence(
                         subsequence, candidate, transition_window
+                    )
+                    alt = self.blend_with_reference(
+                        alt, subsequence, transition_window
                     )
                     alt_effect = float(np.max(np.abs(alt - subsequence)))
                     if alt_effect > best_effect:
