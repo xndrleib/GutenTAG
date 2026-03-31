@@ -18,6 +18,7 @@ class Compatibility:
             [1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0],  # pattern
             [1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # pattern_shift
             [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # platform
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # shared-factor-break
             [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # trend
             [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # variance
             [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],  # mode_correlation
@@ -48,6 +49,7 @@ class Compatibility:
             ANOMALY_TYPE_NAMES.PATTERN,
             ANOMALY_TYPE_NAMES.PATTERN_SHIFT,
             ANOMALY_TYPE_NAMES.PLATFORM,
+            ANOMALY_TYPE_NAMES.SHARED_FACTOR_BREAK,
             ANOMALY_TYPE_NAMES.TREND,
             ANOMALY_TYPE_NAMES.VARIANCE,
             ANOMALY_TYPE_NAMES.MODE_CORRELATION,

@@ -39,6 +39,7 @@ class ANOMALY_TYPE_NAMES:
     PATTERN = "pattern"
     PATTERN_SHIFT = "pattern-shift"
     PLATFORM = "platform"
+    SHARED_FACTOR_BREAK = "shared-factor-break"
     TREND = "trend"
     VARIANCE = "variance"
     MODE_CORRELATION = "mode-correlation"

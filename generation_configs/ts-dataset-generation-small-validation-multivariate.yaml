@@ -44,6 +44,9 @@ anomaly_policy:
     lag-synchronization:
       channel_policy: paired-random
       min_segment_length: 10
+    shared-factor-break:
+      channel_policy: paired-random
+      min_segment_length: 8
   min_segment_length_by_anomaly:
     pattern: 6
     pattern-shift: 6
@@ -51,6 +54,7 @@ anomaly_policy:
     covariance-change: 8
     channel-rewiring: 8
     lag-synchronization: 10
+    shared-factor-break: 8
 
 variants:
   base_oscillations:
@@ -64,6 +68,7 @@ variants:
     - covariance-change
     - channel-rewiring
     - lag-synchronization
+    - shared-factor-break
   skip_base_oscillations: []
   skip_anomaly_types: []
   disabled_anomaly_types: []
@@ -152,9 +157,13 @@ variants:
       coupling_strength: -0.95
       transition_length: 8
     channel-rewiring:
+      rotation_degrees: 25
       transition_length: 8
     lag-synchronization:
       lag_steps: 6
+      transition_length: 8
+    shared-factor-break:
+      shared_factor_scale: 0.0
       transition_length: 8
 
 plot:

@@ -20,6 +20,7 @@ properties:
       - pattern
       - pattern-shift
       - platform
+      - shared-factor-break
       - trend
       - variance
       - mode-correlation
@@ -34,6 +35,7 @@ oneOf:
   - $ref: "#/definitions/pattern-params"
   - $ref: "#/definitions/pattern-shift-params"
   - $ref: "#/definitions/platform-params"
+  - $ref: "#/definitions/shared-factor-break-params"
   - $ref: "#/definitions/variance-params"
   - $ref: "#/definitions/amplitude-params"
   - $ref: "#/definitions/mode-correlation-params"
@@ -177,6 +179,19 @@ definitions:
       value:
         type: number
         description: Value of the platform on the y axis.
+    additionalProperties: false
+  shared-factor-break-params:
+    required:
+      - kind
+    properties:
+      kind:
+        const: shared-factor-break
+      shared_factor_scale:
+        type: number
+        description: Shared-factor attenuation or sign flip relative to the anchor channel.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
     additionalProperties: false
   variance-params:
     required:

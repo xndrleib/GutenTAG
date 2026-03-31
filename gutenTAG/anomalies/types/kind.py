@@ -12,6 +12,7 @@ from .mode_correlation import AnomalyModeCorrelation
 from .pattern import AnomalyPattern
 from .pattern_shift import AnomalyPatternShift
 from .platform import AnomalyPlatform
+from .shared_factor_break import AnomalySharedFactorBreak
 from .trend import AnomalyTrend
 from .variance import AnomalyVariance
 from .. import BaseAnomaly
@@ -32,6 +33,7 @@ class AnomalyKind(Enum):
     CovarianceChange = ANOMALY_TYPE_NAMES.COVARIANCE_CHANGE
     ChannelRewiring = ANOMALY_TYPE_NAMES.CHANNEL_REWIRING
     LagSynchronization = ANOMALY_TYPE_NAMES.LAG_SYNCHRONIZATION
+    SharedFactorBreak = ANOMALY_TYPE_NAMES.SHARED_FACTOR_BREAK
 
     def create(self, parameters: Dict[str, Any]) -> BaseAnomaly:  # noqa: C901
         if self == AnomalyKind.Platform:
@@ -60,6 +62,8 @@ class AnomalyKind(Enum):
             return self._instantiate_anomaly(AnomalyChannelRewiring, parameters)
         elif self == AnomalyKind.LagSynchronization:
             return self._instantiate_anomaly(AnomalyLagSynchronization, parameters)
+        elif self == AnomalyKind.SharedFactorBreak:
+            return self._instantiate_anomaly(AnomalySharedFactorBreak, parameters)
         else:
             raise ValueError(
                 f"AnomalyKind {self.value} is not supported, yet! Guten Tag!"
