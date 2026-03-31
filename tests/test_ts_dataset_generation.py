@@ -1345,6 +1345,123 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     msg=f"Platform effect floor was not met for event {event}",
                 )
 
+    def test_mean_platform_and_variance_keep_source_edges_continuous(self) -> None:
+        anomaly_overrides = {
+            "mean": {"offset": 0.8, "transition_length": 6},
+            "platform": {"value": 0.25, "min_effect_delta": 0.15, "transition_length": 6},
+            "variance": {"variance": 0.10, "min_effect_delta": 0.12, "transition_length": 6},
+        }
+        base_by_type = {"mean": "sine", "platform": "square", "variance": "cosine"}
+
+        for anomaly_type in ["mean", "platform", "variance"]:
+            with self.subTest(anomaly_type=anomaly_type):
+                with tempfile.TemporaryDirectory() as tmp:
+                    output_root = Path(tmp) / "dataset"
+                    config = self._base_config(output_root)
+                    config["dataset"]["length"] = 700
+                    config["dataset"]["channels"] = 1
+                    config["dataset"]["splits"] = ["train"]
+                    config["dataset"]["instances_per_split"] = 1
+                    config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+                    config["anomaly_policy"]["density_tolerance"] = 0.02
+                    config["anomaly_policy"]["segment_count_range"] = [4, 5]
+                    config["variants"]["base_oscillations"] = [base_by_type[anomaly_type]]
+                    config["variants"]["anomaly_types"] = [anomaly_type]
+                    config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+                    config["variants"]["anomaly_overrides"] = {
+                        anomaly_type: anomaly_overrides[anomaly_type]
+                    }
+                    config["plot"]["enabled"] = False
+
+                    manifest = TSDatasetGenerator.from_dict(config).run()
+                    variant_id = f"{base_by_type[anomaly_type]}__{anomaly_type}__p00"
+                    self.assertIn(variant_id, manifest["generated_variants"])
+                    instance_dir = (
+                        output_root
+                        / "variants"
+                        / variant_id
+                        / "train"
+                        / "instances"
+                        / "instance_000"
+                    )
+                    clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+                    anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                        dtype=np.float64
+                    )
+                    with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                        events = json.load(handle)
+                    self.assertGreater(len(events), 0)
+                    for event in events:
+                        source_start = int(event["source_start"])
+                        source_end = int(event["source_end"])
+                        channel = int(event["channel"])
+                        self.assertAlmostEqual(
+                            float(anomalous[source_start, channel]),
+                            float(clean[source_start, channel]),
+                            places=8,
+                            msg=f"Expected left source edge continuity for {anomaly_type}: {event}",
+                        )
+                        self.assertAlmostEqual(
+                            float(anomalous[source_end - 1, channel]),
+                            float(clean[source_end - 1, channel]),
+                            places=8,
+                            msg=f"Expected right source edge continuity for {anomaly_type}: {event}",
+                        )
+
+    def test_variance_zero_keeps_source_edges_continuous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 700
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 5]
+            config["variants"]["base_oscillations"] = ["cosine"]
+            config["variants"]["anomaly_types"] = ["variance"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["anomaly_overrides"] = {
+                "variance": {"variance": 0.0, "transition_length": 6}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            variant_id = "cosine__variance__p00"
+            self.assertIn(variant_id, manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / variant_id
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(
+                dtype=np.float64
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                source_start = int(event["source_start"])
+                source_end = int(event["source_end"])
+                channel = int(event["channel"])
+                self.assertAlmostEqual(
+                    float(anomalous[source_start, channel]),
+                    float(clean[source_start, channel]),
+                    places=8,
+                    msg=f"Expected left source edge continuity for variance=0: {event}",
+                )
+                self.assertAlmostEqual(
+                    float(anomalous[source_end - 1, channel]),
+                    float(clean[source_end - 1, channel]),
+                    places=8,
+                    msg=f"Expected right source edge continuity for variance=0: {event}",
+                )
+
     def test_variance_min_effect_delta_is_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "dataset"
@@ -1394,6 +1511,55 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     0.119,
                     msg=f"Variance effect floor was not met for event {event}",
                 )
+
+    def test_paired_random_channel_policy_creates_synchronous_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 600
+            config["dataset"]["channels"] = 4
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["anomaly_policy"]["channel_policy"] = "paired-random"
+            config["variants"]["anomaly_types"] = ["mean"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["anomaly_overrides"] = {
+                "mean": {"offset": 0.8, "transition_length": 4}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__mean__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__mean__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            with (instance_dir / "instance_summary.json").open("r", encoding="utf-8") as handle:
+                summary = json.load(handle)
+
+            self.assertEqual(summary["channel_policy"], "paired-random")
+            grouped: Dict[int, list] = {}
+            for event in events:
+                grouped.setdefault(int(event["group_id"]), []).append(event)
+            self.assertEqual(len(grouped), int(summary["n_event_groups"]))
+            self.assertGreater(len(grouped), 0)
+            for group_id, group_events in grouped.items():
+                self.assertEqual(len(group_events), 2, msg=f"group {group_id} must affect two channels")
+                channels = sorted(int(event["channel"]) for event in group_events)
+                self.assertEqual(channels, sorted(int(ch) for ch in group_events[0]["group_channels"]))
+                starts = {int(event["source_start"]) for event in group_events}
+                ends = {int(event["source_end"]) for event in group_events}
+                self.assertEqual(len(starts), 1)
+                self.assertEqual(len(ends), 1)
 
 
 if __name__ == "__main__":

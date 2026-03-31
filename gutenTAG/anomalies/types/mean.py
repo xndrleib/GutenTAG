@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Type
+from typing import Optional, Type
 
 import numpy as np
 
@@ -11,12 +11,14 @@ from ...base_oscillations import RandomModeJump
 @dataclass
 class AnomalyMeanParameters:
     offset: float = 0.0
+    transition_length: Optional[int] = None
 
 
 class AnomalyMean(BaseAnomaly):
     def __init__(self, parameters: AnomalyMeanParameters):
         super().__init__()
         self.offset = parameters.offset
+        self.transition_length = parameters.transition_length
 
     def generate(self, anomaly_protocol: AnomalyProtocol) -> AnomalyProtocol:
         if anomaly_protocol.base_oscillation_kind == RandomModeJump.KIND:
@@ -27,10 +29,11 @@ class AnomalyMean(BaseAnomaly):
 
         base = anomaly_protocol.base_oscillation
         ts: np.ndarray = base.timeseries
-        creeping = self.generate_creeping(anomaly_protocol)
-        subsequence = (
-            ts[anomaly_protocol.start : anomaly_protocol.end] + self.offset * creeping
+        clean_segment = ts[anomaly_protocol.start : anomaly_protocol.end]
+        envelope = self.build_symmetric_envelope(
+            clean_segment.shape[0], self.transition_length
         )
+        subsequence = clean_segment + float(self.offset) * envelope
         anomaly_protocol.subsequences.append(subsequence)
         return anomaly_protocol
 

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Type
+from typing import Optional, Type
 
 import numpy as np
 
@@ -12,6 +12,7 @@ from ...base_oscillations import CylinderBellFunnel, RandomModeJump
 class AnomalyVarianceParameters:
     variance: float = 0.0
     min_effect_delta: float = 0.0
+    transition_length: Optional[int] = None
 
 
 class AnomalyVariance(BaseAnomaly):
@@ -19,6 +20,7 @@ class AnomalyVariance(BaseAnomaly):
         super().__init__()
         self.variance = parameters.variance
         self.min_effect_delta = max(0.0, float(parameters.min_effect_delta))
+        self.transition_length = parameters.transition_length
 
     def generate(self, anomaly_protocol: AnomalyProtocol) -> AnomalyProtocol:
         base = anomaly_protocol.base_oscillation
@@ -45,16 +47,17 @@ class AnomalyVariance(BaseAnomaly):
             reference_scale = max(local_scale, 0.25 * amplitude, 1e-6)
 
             target_std = max(0.0, float(self.variance) * reference_scale)
-            base_std = max(0.0, float(base.variance) * reference_scale)
-
-            std_schedule = (
-                self.generate_creeping(anomaly_protocol) * (target_std - base_std)
-                + base_std
-            )
-            std_schedule = np.clip(std_schedule, 0.0, None)
 
             if target_std <= 0:
-                base.noise[anomaly_protocol.start : anomaly_protocol.end] = 0.0
+                original_noise = np.array(
+                    base.noise[anomaly_protocol.start : anomaly_protocol.end], copy=True
+                )
+                envelope = self.build_symmetric_envelope(length, self.transition_length)
+                candidate_noise = original_noise * (1.0 - envelope)
+                if candidate_noise.size > 0:
+                    candidate_noise[0] = original_noise[0]
+                    candidate_noise[-1] = original_noise[-1]
+                base.noise[anomaly_protocol.start : anomaly_protocol.end] = candidate_noise
                 return anomaly_protocol
 
             original_noise = np.array(
@@ -63,8 +66,9 @@ class AnomalyVariance(BaseAnomaly):
             subsequence_noise = base.generate_noise(
                 anomaly_protocol.ctx.to_bo(), target_std, length
             )
-            candidate_noise = (
-                subsequence_noise * (std_schedule / target_std)
+            envelope = self.build_symmetric_envelope(length, self.transition_length)
+            candidate_noise = original_noise + envelope * (
+                subsequence_noise - original_noise
             )
             if self.min_effect_delta > 0.0:
                 # Ensure a minimal absolute perturbation within the source window
@@ -83,6 +87,9 @@ class AnomalyVariance(BaseAnomaly):
                             sign = -1.0 if anomaly_protocol.rng.random() < 0.5 else 1.0
                             fallback[center] = sign * self.min_effect_delta
                         candidate_noise = original_noise + fallback
+            if candidate_noise.size > 0:
+                candidate_noise[0] = original_noise[0]
+                candidate_noise[-1] = original_noise[-1]
             base.noise[anomaly_protocol.start : anomaly_protocol.end] = candidate_noise
         return anomaly_protocol
 

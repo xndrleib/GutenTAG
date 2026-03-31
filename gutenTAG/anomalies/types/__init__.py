@@ -76,6 +76,45 @@ class BaseAnomaly(ABC):
             ]
         )
 
+    @staticmethod
+    def build_symmetric_envelope(
+        length: int, transition_length: Optional[int]
+    ) -> np.ndarray:
+        """Build a symmetric edge-safe envelope on `[0, length)`.
+
+        The envelope is exactly zero at both boundaries when `transition_length`
+        is positive and reaches one in the interior when the window is long
+        enough. This is used to avoid seam-like artifacts at insertion edges.
+        """
+        if length <= 0:
+            return np.zeros(0, dtype=np.float64)
+        if transition_length is None:
+            ramp = max(1, int(round(length * 0.2)))
+        else:
+            ramp = int(max(0, transition_length))
+        ramp = min(ramp, length // 2)
+        if ramp <= 0:
+            return np.ones(length, dtype=np.float64)
+        ramp_full = 0.5 * (
+            1.0 - np.cos(np.pi * np.arange(ramp + 1, dtype=np.float64) / float(ramp))
+        )
+        left = ramp_full[:-1]
+        right = left[::-1]
+        plateau_length = max(0, length - 2 * ramp)
+        plateau = np.ones(plateau_length, dtype=np.float64)
+        envelope = np.concatenate([left, plateau, right]).astype(np.float64)
+        if envelope.shape[0] != length:
+            if envelope.shape[0] > length:
+                envelope = envelope[:length]
+            else:
+                envelope = np.pad(
+                    envelope, (0, length - envelope.shape[0]), mode="edge"
+                )
+        if envelope.size > 0:
+            envelope[0] = 0.0
+            envelope[-1] = 0.0
+        return envelope
+
     def turn_off_trend(self, anomaly_protocol):
         anomaly_protocol.base_oscillation.trend_series[
             anomaly_protocol.start : anomaly_protocol.end

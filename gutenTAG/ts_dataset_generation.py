@@ -544,8 +544,12 @@ class TSGeneratorConfig:
             )
         if self.placement_policy != "uniform":
             raise ValueError("Only placement_policy='uniform' is supported")
-        if self.channel_policy != "single-random":
-            raise ValueError("Only channel_policy='single-random' is supported")
+        if self.channel_policy not in ("single-random", "paired-random", "all-channels"):
+            raise ValueError(
+                "channel_policy must be one of {'single-random','paired-random','all-channels'}"
+            )
+        if self.channel_policy == "paired-random" and self.channels < 2:
+            raise ValueError("channel_policy='paired-random' requires dataset.channels >= 2")
         if self.overlap_policy not in ("global", "per_channel"):
             raise ValueError("overlap_policy must be one of {'global','per_channel'}")
         if self.profiles_per_pair <= 0:
@@ -1479,6 +1483,7 @@ class TSDatasetGenerator:
         )
         labels, events = self._apply_anomalies(
             anomaly_objects=anomaly_objects,
+            segment_plan=segment_plan,
             base=anomalous_base,
             channel_bos=anomalous_bos,
             anomaly_seed=int(seeds["anomaly_seed"]),
@@ -1554,6 +1559,12 @@ class TSDatasetGenerator:
             str(channel): int(sum(1 for event in events if event["channel"] == channel))
             for channel in range(self.config.channels)
         }
+        unique_group_ids = sorted(
+            {
+                int(event.get("group_id", idx))
+                for idx, event in enumerate(events)
+            }
+        )
         instance_summary: Dict[str, Any] = {
             "instance_id": instance_dir.name,
             "split": split,
@@ -1569,6 +1580,7 @@ class TSDatasetGenerator:
             "density_error": abs(density_for_validation - target_density),
             "density_tolerance": active_density_tolerance,
             "n_segments": len(events),
+            "n_event_groups": len(unique_group_ids),
             "segment_length_mean": float(np.mean(segment_lengths)),
             "segment_length_median": float(np.median(segment_lengths)),
             "segment_length_std": float(np.std(segment_lengths)),
@@ -1579,6 +1591,7 @@ class TSDatasetGenerator:
             "effective_support_shrink_count": effective_support_shrink_count,
             "energy_fallback_count": energy_fallback_count,
             "per_channel_segment_counts": per_channel_counts,
+            "channel_policy": self.config.channel_policy,
             "overlap_policy": active_overlap_policy,
             "segment_planner": _to_builtin_types(planner_cfg),
             "variant_anomaly_policy": _to_builtin_types(special_policy),
@@ -1838,20 +1851,22 @@ class TSDatasetGenerator:
                 planner_cfg.get("overlap_policy", self.config.overlap_policy),
             )
         )
+        raw_segments: List[SegmentPlan]
 
         if planner_name == "point_events_from_density":
-            return self._sample_point_event_segments(
+            raw_segments = self._sample_point_event_segments(
                 rng=rng,
                 target_density=target_density,
                 overlap_policy=overlap_policy,
                 planner_cfg=planner_cfg,
             )
+            return self._apply_channel_policy_to_segments(raw_segments, rng)
         if planner_name == "period_locked_frequency":
             if anomaly_type != "frequency":
                 raise ValueError(
                     "period_locked_frequency planner is only supported for anomaly_type='frequency'."
                 )
-            return self._sample_period_locked_frequency_segments(
+            raw_segments = self._sample_period_locked_frequency_segments(
                 rng=rng,
                 target_density=target_density,
                 overlap_policy=overlap_policy,
@@ -1861,8 +1876,9 @@ class TSDatasetGenerator:
                 period_boundaries=period_boundaries,
                 period_boundaries_by_channel=period_boundaries_by_channel,
             )
+            return self._apply_channel_policy_to_segments(raw_segments, rng)
         if planner_name == "energy_aware_segments":
-            return self._sample_energy_aware_segments(
+            raw_segments = self._sample_energy_aware_segments(
                 rng=rng,
                 target_density=target_density,
                 overlap_policy=overlap_policy,
@@ -1871,6 +1887,7 @@ class TSDatasetGenerator:
                 anomaly_type=anomaly_type,
                 clean_values=clean_values,
             )
+            return self._apply_channel_policy_to_segments(raw_segments, rng)
         if planner_name == "trend_parameter_aware_segments":
             if anomaly_type != "trend":
                 raise ValueError(
@@ -1881,7 +1898,7 @@ class TSDatasetGenerator:
                     "trend_parameter_aware_segments planner requires anomaly_parameter_template "
                     "and parameter_seed."
                 )
-            return self._sample_trend_parameter_aware_segments(
+            raw_segments = self._sample_trend_parameter_aware_segments(
                 rng=rng,
                 target_density=target_density,
                 overlap_policy=overlap_policy,
@@ -1891,6 +1908,7 @@ class TSDatasetGenerator:
                 parameter_seed=int(parameter_seed),
                 clean_values=clean_values,
             )
+            return self._apply_channel_policy_to_segments(raw_segments, rng)
 
         segment_count_range = _parse_pair_int(
             special_policy.get(
@@ -2008,7 +2026,54 @@ class TSDatasetGenerator:
         segments.sort(
             key=lambda segment: (segment.start, segment.channel, segment.length)
         )
-        return segments
+        return self._apply_channel_policy_to_segments(segments, rng)
+
+    def _apply_channel_policy_to_segments(
+        self, segments: List[SegmentPlan], rng: np.random.Generator
+    ) -> List[SegmentPlan]:
+        """Expand a single-channel segment plan according to channel policy."""
+        if self.config.channel_policy == "single-random":
+            expanded: List[SegmentPlan] = []
+            for group_id, segment in enumerate(segments):
+                attrs = copy.deepcopy(dict(segment.attrs))
+                attrs.setdefault("group_id", int(group_id))
+                attrs.setdefault("group_channels", [int(segment.channel)])
+                expanded.append(
+                    SegmentPlan(
+                        start=segment.start,
+                        end=segment.end,
+                        length=segment.length,
+                        channel=segment.channel,
+                        attrs=attrs,
+                    )
+                )
+            return expanded
+
+        expanded = []
+        all_channels = list(range(self.config.channels))
+        for group_id, segment in enumerate(segments):
+            if self.config.channel_policy == "all-channels":
+                group_channels = all_channels
+            else:
+                remaining = [ch for ch in all_channels if ch != int(segment.channel)]
+                partner = int(remaining[int(rng.integers(0, len(remaining)))])
+                group_channels = sorted({int(segment.channel), partner})
+            for channel in group_channels:
+                attrs = copy.deepcopy(dict(segment.attrs))
+                attrs["group_id"] = int(group_id)
+                attrs["group_channels"] = [int(ch) for ch in group_channels]
+                expanded.append(
+                    SegmentPlan(
+                        start=segment.start,
+                        end=segment.end,
+                        length=segment.length,
+                        channel=int(channel),
+                        attrs=attrs,
+                    )
+                )
+
+        expanded.sort(key=lambda segment: (segment.start, segment.channel, segment.length))
+        return expanded
 
     def _sample_period_locked_frequency_segments(
         self,
@@ -3399,7 +3464,7 @@ class TSDatasetGenerator:
         self, anomaly_type: str, parameters: Mapping[str, Any]
     ) -> Dict[str, Any]:
         resolved = copy.deepcopy(dict(parameters))
-        if anomaly_type in {"amplitude", "trend"} and "transition_length" in resolved:
+        if anomaly_type in {"amplitude", "trend", "mean", "platform", "variance"} and "transition_length" in resolved:
             transition_length = int(resolved["transition_length"])
             resolved["transition_length"] = max(0, transition_length)
         if anomaly_type == "trend":
@@ -3495,6 +3560,7 @@ class TSDatasetGenerator:
     def _apply_anomalies(
         self,
         anomaly_objects: List[Anomaly],
+        segment_plan: List[SegmentPlan],
         base: np.ndarray,
         channel_bos: List[Any],
         anomaly_seed: int,
@@ -3509,6 +3575,7 @@ class TSDatasetGenerator:
         }
 
         for segment_idx, anomaly in enumerate(anomaly_objects):
+            segment_metadata = segment_plan[segment_idx]
             channel = anomaly.channel
             bo = channel_bos[channel]
             planned_start = (
@@ -3597,6 +3664,13 @@ class TSDatasetGenerator:
                     "end": int(label_end),
                     "channel": int(channel),
                     "anomaly_type": anomaly_type,
+                    "group_id": int(segment_metadata.attrs.get("group_id", segment_idx)),
+                    "group_channels": [
+                        int(ch)
+                        for ch in segment_metadata.attrs.get(
+                            "group_channels", [int(channel)]
+                        )
+                    ],
                     "params": _to_builtin_types(
                         anomaly_parameters_per_segment[segment_idx]
                     ),
