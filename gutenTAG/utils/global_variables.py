@@ -30,8 +30,11 @@ class BASE_OSCILLATION_NAMES:
 
 class ANOMALY_TYPE_NAMES:
     AMPLITUDE = "amplitude"
+    COVARIANCE_CHANGE = "covariance-change"
+    CHANNEL_REWIRING = "channel-rewiring"
     EXTREMUM = "extremum"
     FREQUENCY = "frequency"
+    LAG_SYNCHRONIZATION = "lag-synchronization"
     MEAN = "mean"
     PATTERN = "pattern"
     PATTERN_SHIFT = "pattern-shift"

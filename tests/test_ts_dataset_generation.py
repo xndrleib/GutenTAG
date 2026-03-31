@@ -1693,6 +1693,157 @@ class TestTSDatasetGeneration(unittest.TestCase):
                 self.assertEqual(len(starts), 1)
                 self.assertEqual(len(ends), 1)
 
+    def test_new_multivariate_anomalies_emit_semantic_metadata(self) -> None:
+        anomaly_setups = {
+            "covariance-change": {
+                "base": "sine",
+                "override": {"coupling_strength": 0.95, "transition_length": 6},
+            },
+            "channel-rewiring": {
+                "base": "sine",
+                "override": {"transition_length": 6},
+            },
+            "lag-synchronization": {
+                "base": "sawtooth",
+                "override": {"lag_steps": 5, "transition_length": 6},
+            },
+        }
+        for anomaly_type, setup in anomaly_setups.items():
+            with self.subTest(anomaly_type=anomaly_type), tempfile.TemporaryDirectory() as tmp:
+                output_root = Path(tmp) / "dataset"
+                config = self._base_config(output_root)
+                config["dataset"]["length"] = 900
+                config["dataset"]["channels"] = 4
+                config["dataset"]["splits"] = ["train"]
+                config["dataset"]["instances_per_split"] = 1
+                config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+                config["anomaly_policy"]["density_tolerance"] = 0.02
+                config["anomaly_policy"]["segment_count_range"] = [4, 4]
+                config["anomaly_policy"]["channel_policy"] = "single-random"
+                config["variants"]["base_oscillations"] = [str(setup["base"])]
+                config["variants"]["anomaly_types"] = [anomaly_type]
+                config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+                config["variants"]["base_channel_correlation"] = {
+                    "shared_noise_weight": 0.35
+                }
+                config["variants"]["anomaly_overrides"] = {
+                    anomaly_type: dict(setup["override"])
+                }
+                config["plot"]["enabled"] = False
+
+                manifest = TSDatasetGenerator.from_dict(config).run()
+                variant_id = f"{setup['base']}__{anomaly_type}__p00"
+                self.assertIn(variant_id, manifest["generated_variants"])
+                instance_dir = (
+                    output_root
+                    / "variants"
+                    / variant_id
+                    / "train"
+                    / "instances"
+                    / "instance_000"
+                )
+                with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                    events = json.load(handle)
+                with (instance_dir / "instance_summary.json").open(
+                    "r", encoding="utf-8"
+                ) as handle:
+                    summary = json.load(handle)
+
+                self.assertEqual(summary["channel_policy"], "paired-random")
+                self.assertGreater(len(events), 0)
+                for event in events:
+                    self.assertIn("affected_channels", event)
+                    self.assertIn("anomaly_object", event)
+                    self.assertIn("group_id", event)
+                    self.assertIn("group_channels", event)
+                    self.assertIn("channel_visible", event)
+                    self.assertIn("purity_hint", event)
+                    affected = [int(ch) for ch in event["affected_channels"]]
+                    group_channels = [int(ch) for ch in event["group_channels"]]
+                    self.assertGreaterEqual(len(group_channels), 2)
+                    self.assertTrue(set(affected).issubset(set(group_channels)))
+
+    def test_covariance_change_increases_relation_shift_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 900
+            config["dataset"]["channels"] = 4
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["variants"]["base_oscillations"] = ["sine"]
+            config["variants"]["anomaly_types"] = ["covariance-change"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.45}
+            config["variants"]["anomaly_overrides"] = {
+                "covariance-change": {"coupling_strength": -0.97, "transition_length": 6}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__covariance-change__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__covariance-change__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(dtype=np.float64)
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+
+            event = events[0]
+            channels = [int(ch) for ch in event["group_channels"]]
+            source_start = int(event["source_start"])
+            source_end = int(event["source_end"])
+            clean_corr = np.corrcoef(clean[source_start:source_end, channels].T)[0, 1]
+            anom_corr = np.corrcoef(anomalous[source_start:source_end, channels].T)[0, 1]
+            self.assertGreater(abs(float(anom_corr) - float(clean_corr)), 0.15)
+            self.assertEqual(event["anomaly_object"], "shared_noise_coupling_change")
+            self.assertEqual(event["purity_hint"], "multivariate_preferred")
+
+    def test_lag_synchronization_records_realized_lag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 900
+            config["dataset"]["channels"] = 4
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["variants"]["base_oscillations"] = ["sawtooth"]
+            config["variants"]["anomaly_types"] = ["lag-synchronization"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["anomaly_overrides"] = {
+                "lag-synchronization": {"lag_steps": 7, "transition_length": 6}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sawtooth__lag-synchronization__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sawtooth__lag-synchronization__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            realized = [int(event["realized_lag_steps"]) for event in events]
+            self.assertTrue(any(abs(value) > 0 for value in realized))
+            self.assertTrue(all(event["purity_hint"] == "not_pure_local" for event in events))
+
 
 if __name__ == "__main__":
     unittest.main()

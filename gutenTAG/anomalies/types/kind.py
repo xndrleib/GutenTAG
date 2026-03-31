@@ -2,8 +2,11 @@ from enum import Enum
 from typing import Any, Dict
 
 from .amplitude import AnomalyAmplitude
+from .channel_rewiring import AnomalyChannelRewiring
+from .covariance_change import AnomalyCovarianceChange
 from .extremum import AnomalyExtremum
 from .frequency import AnomalyFrequency
+from .lag_synchronization import AnomalyLagSynchronization
 from .mean import AnomalyMean
 from .mode_correlation import AnomalyModeCorrelation
 from .pattern import AnomalyPattern
@@ -26,6 +29,9 @@ class AnomalyKind(Enum):
     Amplitude = ANOMALY_TYPE_NAMES.AMPLITUDE
     Trend = ANOMALY_TYPE_NAMES.TREND
     ModeCorrelation = ANOMALY_TYPE_NAMES.MODE_CORRELATION
+    CovarianceChange = ANOMALY_TYPE_NAMES.COVARIANCE_CHANGE
+    ChannelRewiring = ANOMALY_TYPE_NAMES.CHANNEL_REWIRING
+    LagSynchronization = ANOMALY_TYPE_NAMES.LAG_SYNCHRONIZATION
 
     def create(self, parameters: Dict[str, Any]) -> BaseAnomaly:  # noqa: C901
         if self == AnomalyKind.Platform:
@@ -48,6 +54,12 @@ class AnomalyKind(Enum):
             return self._instantiate_anomaly(AnomalyTrend, parameters)
         elif self == AnomalyKind.ModeCorrelation:
             return self._instantiate_anomaly(AnomalyModeCorrelation, parameters)
+        elif self == AnomalyKind.CovarianceChange:
+            return self._instantiate_anomaly(AnomalyCovarianceChange, parameters)
+        elif self == AnomalyKind.ChannelRewiring:
+            return self._instantiate_anomaly(AnomalyChannelRewiring, parameters)
+        elif self == AnomalyKind.LagSynchronization:
+            return self._instantiate_anomaly(AnomalyLagSynchronization, parameters)
         else:
             raise ValueError(
                 f"AnomalyKind {self.value} is not supported, yet! Guten Tag!"

@@ -35,10 +35,22 @@ anomaly_policy:
       channel_policy: paired-random
       density_tolerance: 0.10
       min_segment_length: 8
+    covariance-change:
+      channel_policy: paired-random
+      min_segment_length: 8
+    channel-rewiring:
+      channel_policy: paired-random
+      min_segment_length: 8
+    lag-synchronization:
+      channel_policy: paired-random
+      min_segment_length: 10
   min_segment_length_by_anomaly:
     pattern: 6
     pattern-shift: 6
     mode-correlation: 8
+    covariance-change: 8
+    channel-rewiring: 8
+    lag-synchronization: 10
 
 variants:
   base_oscillations:
@@ -49,6 +61,9 @@ variants:
     - pattern
     - pattern-shift
     - mode-correlation
+    - covariance-change
+    - channel-rewiring
+    - lag-synchronization
   skip_base_oscillations: []
   skip_anomaly_types: []
   disabled_anomaly_types: []
@@ -133,6 +148,14 @@ variants:
       crossfade_mode: cosine
       min_effect_delta: 0.12
     mode-correlation: {}
+    covariance-change:
+      coupling_strength: -0.95
+      transition_length: 8
+    channel-rewiring:
+      transition_length: 8
+    lag-synchronization:
+      lag_steps: 6
+      transition_length: 8
 
 plot:
   enabled: true

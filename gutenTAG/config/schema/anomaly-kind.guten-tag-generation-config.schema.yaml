@@ -11,8 +11,11 @@ properties:
     type: string
     enum:
       - amplitude
+      - covariance-change
+      - channel-rewiring
       - extremum
       - frequency
+      - lag-synchronization
       - mean
       - pattern
       - pattern-shift
@@ -25,6 +28,9 @@ oneOf:
   - $ref: "#/definitions/extremum-params"
   - $ref: "#/definitions/frequency-params"
   - $ref: "#/definitions/mean-params"
+  - $ref: "#/definitions/covariance-change-params"
+  - $ref: "#/definitions/channel-rewiring-params"
+  - $ref: "#/definitions/lag-synchronization-params"
   - $ref: "#/definitions/pattern-params"
   - $ref: "#/definitions/pattern-shift-params"
   - $ref: "#/definitions/platform-params"
@@ -42,6 +48,29 @@ oneOf:
       additionalProperties: false
 
 definitions:
+  covariance-change-params:
+    required:
+      - kind
+    properties:
+      kind:
+        const: covariance-change
+      coupling_strength:
+        type: number
+        description: Signed coupling strength used to mix a channel with its anchor.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+    additionalProperties: false
+  channel-rewiring-params:
+    required:
+      - kind
+    properties:
+      kind:
+        const: channel-rewiring
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+    additionalProperties: false
   extremum-params:
     required:
       - kind
@@ -70,6 +99,20 @@ definitions:
       frequency_factor:
         type: number
         description: Relative change of frequency.
+    additionalProperties: false
+  lag-synchronization-params:
+    required:
+      - kind
+      - lag_steps
+    properties:
+      kind:
+        const: lag-synchronization
+      lag_steps:
+        type: integer
+        description: Signed lag applied to the shifted channel inside the source window.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
     additionalProperties: false
   mean-params:
     required:

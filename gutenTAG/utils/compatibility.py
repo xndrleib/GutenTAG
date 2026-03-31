@@ -9,8 +9,11 @@ class Compatibility:
     combinations = pd.DataFrame(
         [
             [1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1],  # amplitude
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # covariance-change
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # channel-rewiring
             [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # extremum
             [1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # frequency
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # lag-synchronization
             [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # mean
             [1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0],  # pattern
             [1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # pattern_shift
@@ -36,8 +39,11 @@ class Compatibility:
         ],
         index=[
             ANOMALY_TYPE_NAMES.AMPLITUDE,
+            ANOMALY_TYPE_NAMES.COVARIANCE_CHANGE,
+            ANOMALY_TYPE_NAMES.CHANNEL_REWIRING,
             ANOMALY_TYPE_NAMES.EXTREMUM,
             ANOMALY_TYPE_NAMES.FREQUENCY,
+            ANOMALY_TYPE_NAMES.LAG_SYNCHRONIZATION,
             ANOMALY_TYPE_NAMES.MEAN,
             ANOMALY_TYPE_NAMES.PATTERN,
             ANOMALY_TYPE_NAMES.PATTERN_SHIFT,

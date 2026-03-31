@@ -24,9 +24,24 @@ from tqdm import tqdm
 
 from ._version import __version__
 from .anomalies import Anomaly, AnomalyKind, Position
+from .anomalies.types import BaseAnomaly
 from .base_oscillations import BaseOscillation, RandomModeJump
 from .base_oscillations.utils.math_func_support import SAMPLING_F
 from .config.parser import decode_trend_obj
+from .generator.event_metadata import build_event_record
+from .generator.multivariate_ops import (
+    compose_observed_window,
+    lag_shift_window,
+    matched_coupling_window,
+    matched_rewiring_windows,
+    replace_observed_window,
+)
+from .generator.segment_groups import (
+    collect_group_channels,
+    expand_segments_by_channel_policy,
+    group_indices_by_id,
+    group_source_bounds,
+)
 from .utils.compatibility import Compatibility
 from .utils.global_variables import PARAMETERS
 from .utils.types import GenerationContext
@@ -51,7 +66,10 @@ DEFAULT_BASE_OVERRIDES: Dict[str, Dict[str, Any]] = {
 }
 DEFAULT_ANOMALY_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "amplitude": {"amplitude_factor": 2.0},
+    "channel-rewiring": {"transition_length": 8},
+    "covariance-change": {"coupling_strength": -0.9, "transition_length": 8},
     "frequency": {"frequency_factor": 2.0},
+    "lag-synchronization": {"lag_steps": 6, "transition_length": 8},
     "mean": {"offset": 1.0},
     "pattern": {
         "sinusoid_k": 10.0,
@@ -68,6 +86,14 @@ DEFAULT_ANOMALY_OVERRIDES: Dict[str, Dict[str, Any]] = {
 }
 BASES_REQUIRING_EXTRA_CONFIG: Tuple[str, ...] = ("custom-input", "formula")
 ANOMALIES_INCOMPATIBLE_WITH_DENSITY_POLICY: Tuple[str, ...] = ("extremum",)
+GROUP_LEVEL_ANOMALY_TYPES = frozenset(
+    {
+        "mode-correlation",
+        "covariance-change",
+        "channel-rewiring",
+        "lag-synchronization",
+    }
+)
 
 
 @dataclass
@@ -1827,24 +1853,29 @@ class TSDatasetGenerator:
         """
         start_i = max(0, min(int(start), self.config.length))
         end_i = max(start_i, min(int(end), self.config.length))
-        window = np.array(base[start_i:end_i, channel], dtype=np.float64, copy=True)
-        if window.size == 0:
-            return window
-        if bo.noise is not None:
-            window = window + np.asarray(bo.noise[start_i:end_i], dtype=np.float64)
-        if bo.trend_series is not None:
-            window = window + np.asarray(
-                bo.trend_series[start_i:end_i], dtype=np.float64
-            )
-        if bo.offset is not None:
-            offset_array = np.asarray(bo.offset, dtype=np.float64)
-            if offset_array.ndim == 0:
-                window = window + float(offset_array)
-            elif offset_array.shape[0] == self.config.length:
-                window = window + offset_array[start_i:end_i]
-            else:
-                window = window + float(offset_array.reshape(-1)[0])
-        return window
+        return compose_observed_window(
+            base=base, bo=bo, channel=channel, start=start_i, end=end_i
+        )
+
+    def _replace_channel_window_with_variations(
+        self,
+        base: np.ndarray,
+        bo: Any,
+        channel: int,
+        start: int,
+        end: int,
+        target_observed: np.ndarray,
+    ) -> None:
+        start_i = max(0, min(int(start), self.config.length))
+        end_i = max(start_i, min(int(end), self.config.length))
+        replace_observed_window(
+            base=base,
+            bo=bo,
+            channel=channel,
+            start=start_i,
+            end=end_i,
+            target_observed=target_observed,
+        )
 
     def _sample_segment_plan(
         self,
@@ -2086,48 +2117,13 @@ class TSDatasetGenerator:
     ) -> List[SegmentPlan]:
         """Expand a single-channel segment plan according to channel policy."""
         active_channel_policy = str(channel_policy or self.config.channel_policy)
-        if active_channel_policy == "single-random":
-            expanded: List[SegmentPlan] = []
-            for group_id, segment in enumerate(segments):
-                attrs = copy.deepcopy(dict(segment.attrs))
-                attrs.setdefault("group_id", int(group_id))
-                attrs.setdefault("group_channels", [int(segment.channel)])
-                expanded.append(
-                    SegmentPlan(
-                        start=segment.start,
-                        end=segment.end,
-                        length=segment.length,
-                        channel=segment.channel,
-                        attrs=attrs,
-                    )
-                )
-            return expanded
-
-        expanded = []
-        all_channels = list(range(self.config.channels))
-        for group_id, segment in enumerate(segments):
-            if active_channel_policy == "all-channels":
-                group_channels = all_channels
-            else:
-                remaining = [ch for ch in all_channels if ch != int(segment.channel)]
-                partner = int(remaining[int(rng.integers(0, len(remaining)))])
-                group_channels = sorted({int(segment.channel), partner})
-            for channel in group_channels:
-                attrs = copy.deepcopy(dict(segment.attrs))
-                attrs["group_id"] = int(group_id)
-                attrs["group_channels"] = [int(ch) for ch in group_channels]
-                expanded.append(
-                    SegmentPlan(
-                        start=segment.start,
-                        end=segment.end,
-                        length=segment.length,
-                        channel=int(channel),
-                        attrs=attrs,
-                    )
-                )
-
-        expanded.sort(key=lambda segment: (segment.start, segment.channel, segment.length))
-        return expanded
+        return expand_segments_by_channel_policy(
+            segments=segments,
+            rng=rng,
+            n_channels=self.config.channels,
+            segment_factory=SegmentPlan,
+            channel_policy=active_channel_policy,
+        )
 
     def _sample_period_locked_frequency_segments(
         self,
@@ -3377,12 +3373,15 @@ class TSDatasetGenerator:
             return int(self.config.min_segment_length_by_anomaly[anomaly_type])
         minimums = {
             "amplitude": 5,
+            "channel-rewiring": 8,
+            "covariance-change": 8,
             "mean": 5,
             "variance": 5,
             "platform": 5,
             "pattern": 5,
             "pattern-shift": 5,
             "trend": 5,
+            "lag-synchronization": 10,
             "mode-correlation": 5,
         }
         return minimums.get(anomaly_type, 1)
@@ -3394,6 +3393,12 @@ class TSDatasetGenerator:
         else:
             special = {}
         if anomaly_type == "mode-correlation":
+            special.setdefault("channel_policy", "paired-random")
+        elif anomaly_type in {
+            "covariance-change",
+            "channel-rewiring",
+            "lag-synchronization",
+        }:
             special.setdefault("channel_policy", "paired-random")
         return special
 
@@ -3843,6 +3848,7 @@ class TSDatasetGenerator:
             channel: [] for channel in range(self.config.channels)
         }
         processed_group_ids = set()
+        segment_groups = group_indices_by_id(segment_plan)
 
         for segment_idx, anomaly in enumerate(anomaly_objects):
             segment_metadata = segment_plan[segment_idx]
@@ -3853,23 +3859,12 @@ class TSDatasetGenerator:
                     "group_channels", [int(segment_metadata.channel)]
                 )
             ]
-            if (
-                anomaly_type == "mode-correlation"
-                and len(group_channels) > 1
-                and all(
-                    channel_bos[ch].get_base_oscillation_kind() == RandomModeJump.KIND
-                    for ch in group_channels
-                )
-            ):
+            if anomaly_type in GROUP_LEVEL_ANOMALY_TYPES and len(group_channels) > 1:
                 if group_id in processed_group_ids:
                     continue
                 processed_group_ids.add(group_id)
-                group_indices = [
-                    idx
-                    for idx, plan in enumerate(segment_plan)
-                    if int(plan.attrs.get("group_id", idx)) == group_id
-                ]
-                group_events = self._apply_mode_correlation_group(
+                group_indices = segment_groups.get(group_id, [segment_idx])
+                group_events = self._apply_group_anomaly(
                     group_indices=group_indices,
                     segment_plan=segment_plan,
                     base=base,
@@ -3963,30 +3958,100 @@ class TSDatasetGenerator:
             )
             labels[label_start:label_end, channel] = 1
             used_positions[channel].append((protocol.start, protocol.end))
+            attrs = dict(segment_metadata.attrs)
             events.append(
-                {
-                    "start": int(label_start),
-                    "end": int(label_end),
-                    "channel": int(channel),
-                    "anomaly_type": anomaly_type,
-                    "group_id": int(segment_metadata.attrs.get("group_id", segment_idx)),
-                    "group_channels": [
+                build_event_record(
+                    start=int(label_start),
+                    end=int(label_end),
+                    channel=int(channel),
+                    anomaly_type=anomaly_type,
+                    group_id=int(attrs.get("group_id", segment_idx)),
+                    group_channels=[
                         int(ch)
-                        for ch in segment_metadata.attrs.get(
+                        for ch in attrs.get(
                             "group_channels", [int(channel)]
                         )
                     ],
-                    "params": _to_builtin_types(
-                        anomaly_parameters_per_segment[segment_idx]
-                    ),
-                    "length": int(label_end - label_start),
-                    "source_start": int(protocol.start),
-                    "source_end": int(protocol.end),
-                }
+                    affected_channels=[
+                        int(ch)
+                        for ch in attrs.get("affected_channels", [int(channel)])
+                    ],
+                    anomaly_object=str(attrs.get("anomaly_object", anomaly_type)),
+                    channel_visible=bool(attrs.get("channel_visible", True)),
+                    purity_hint=str(attrs.get("purity_hint", "channel_visible")),
+                    params=_to_builtin_types(anomaly_parameters_per_segment[segment_idx]),
+                    source_start=int(protocol.start),
+                    source_end=int(protocol.end),
+                )
             )
 
         events.sort(key=lambda event: (event["start"], event["channel"], event["end"]))
         return labels, events
+
+    def _apply_group_anomaly(
+        self,
+        group_indices: List[int],
+        segment_plan: List[SegmentPlan],
+        base: np.ndarray,
+        channel_bos: List[Any],
+        labels: np.ndarray,
+        used_positions: Dict[int, List[Tuple[int, int]]],
+        anomaly_type: str,
+        anomaly_parameters_per_segment: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if anomaly_type == "mode-correlation":
+            group_channels = collect_group_channels(
+                [segment_plan[idx] for idx in group_indices]
+            )
+            if not all(
+                channel_bos[ch].get_base_oscillation_kind() == RandomModeJump.KIND
+                for ch in group_channels
+            ):
+                return []
+            return self._apply_mode_correlation_group(
+                group_indices=group_indices,
+                segment_plan=segment_plan,
+                base=base,
+                channel_bos=channel_bos,
+                labels=labels,
+                used_positions=used_positions,
+                anomaly_type=anomaly_type,
+                anomaly_parameters_per_segment=anomaly_parameters_per_segment,
+            )
+        if anomaly_type == "covariance-change":
+            return self._apply_covariance_change_group(
+                group_indices=group_indices,
+                segment_plan=segment_plan,
+                base=base,
+                channel_bos=channel_bos,
+                labels=labels,
+                used_positions=used_positions,
+                anomaly_type=anomaly_type,
+                anomaly_parameters_per_segment=anomaly_parameters_per_segment,
+            )
+        if anomaly_type == "channel-rewiring":
+            return self._apply_channel_rewiring_group(
+                group_indices=group_indices,
+                segment_plan=segment_plan,
+                base=base,
+                channel_bos=channel_bos,
+                labels=labels,
+                used_positions=used_positions,
+                anomaly_type=anomaly_type,
+                anomaly_parameters_per_segment=anomaly_parameters_per_segment,
+            )
+        if anomaly_type == "lag-synchronization":
+            return self._apply_lag_synchronization_group(
+                group_indices=group_indices,
+                segment_plan=segment_plan,
+                base=base,
+                channel_bos=channel_bos,
+                labels=labels,
+                used_positions=used_positions,
+                anomaly_type=anomaly_type,
+                anomaly_parameters_per_segment=anomaly_parameters_per_segment,
+            )
+        raise ValueError(f"Unsupported group-level anomaly type: {anomaly_type}")
 
     def _apply_mode_correlation_group(
         self,
@@ -4002,19 +4067,12 @@ class TSDatasetGenerator:
         if len(group_indices) == 0:
             return []
         group_segments = [segment_plan[idx] for idx in group_indices]
-        source_start = int(min(segment.start for segment in group_segments))
-        source_end = int(max(segment.end for segment in group_segments))
+        source_start, source_end = group_source_bounds(group_segments)
         if source_end <= source_start:
             return []
 
         group_id = int(group_segments[0].attrs.get("group_id", group_indices[0]))
-        group_channels = sorted(
-            {
-                int(ch)
-                for segment in group_segments
-                for ch in segment.attrs.get("group_channels", [int(segment.channel)])
-            }
-        )
+        group_channels = collect_group_channels(group_segments)
         segment_idx_by_channel = {
             int(segment_plan[idx].channel): int(idx) for idx in group_indices
         }
@@ -4037,8 +4095,14 @@ class TSDatasetGenerator:
         }
 
         for channel in flipped_channels:
-            base[source_start:source_end, channel] = (
-                -1.0 * np.asarray(base[source_start:source_end, channel], dtype=np.float64)
+            flipped_window = -1.0 * before_windows[int(channel)]
+            self._replace_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+                target_observed=flipped_window,
             )
 
         events: List[Dict[str, Any]] = []
@@ -4064,24 +4128,323 @@ class TSDatasetGenerator:
             labels[label_start:label_end, int(channel)] = 1
             used_positions[int(channel)].append((source_start, source_end))
             events.append(
-                {
-                    "start": int(label_start),
-                    "end": int(label_end),
-                    "channel": int(channel),
-                    "anomaly_type": anomaly_type,
-                    "group_id": int(group_id),
-                    "group_channels": [int(ch) for ch in group_channels],
-                    "params": _to_builtin_types(
-                        anomaly_parameters_per_segment[int(segment_idx)]
-                    ),
-                    "length": int(label_end - label_start),
-                    "source_start": int(source_start),
-                    "source_end": int(source_end),
-                    "anomaly_object": "relation_sign_flip",
-                    "anchor_channel": int(anchor_channel),
-                    "flipped_channels": [int(ch) for ch in flipped_channels],
-                    "mode_change_aligned": bool(mode_change_aligned),
-                }
+                build_event_record(
+                    start=int(label_start),
+                    end=int(label_end),
+                    channel=int(channel),
+                    anomaly_type=anomaly_type,
+                    group_id=int(group_id),
+                    group_channels=[int(ch) for ch in group_channels],
+                    affected_channels=[int(ch) for ch in flipped_channels],
+                    anomaly_object="relation_sign_flip",
+                    channel_visible=False,
+                    purity_hint="relation_change",
+                    params=_to_builtin_types(anomaly_parameters_per_segment[int(segment_idx)]),
+                    source_start=int(source_start),
+                    source_end=int(source_end),
+                    extra={
+                        "anchor_channel": int(anchor_channel),
+                        "flipped_channels": [int(ch) for ch in flipped_channels],
+                        "mode_change_aligned": bool(mode_change_aligned),
+                    },
+                )
+            )
+        return events
+
+    def _apply_covariance_change_group(
+        self,
+        group_indices: List[int],
+        segment_plan: List[SegmentPlan],
+        base: np.ndarray,
+        channel_bos: List[Any],
+        labels: np.ndarray,
+        used_positions: Dict[int, List[Tuple[int, int]]],
+        anomaly_type: str,
+        anomaly_parameters_per_segment: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if len(group_indices) == 0:
+            return []
+        group_segments = [segment_plan[idx] for idx in group_indices]
+        source_start, source_end = group_source_bounds(group_segments)
+        group_id = int(group_segments[0].attrs.get("group_id", group_indices[0]))
+        group_channels = collect_group_channels(group_segments)
+        if len(group_channels) < 2 or source_end <= source_start:
+            return []
+        anchor_channel = int(group_channels[0])
+        target_channels = [int(ch) for ch in group_channels[1:]]
+        segment_idx_by_channel = {
+            int(segment_plan[idx].channel): int(idx) for idx in group_indices
+        }
+        anchor_window = self._compose_channel_window_with_variations(
+            base=base,
+            bo=channel_bos[int(anchor_channel)],
+            channel=int(anchor_channel),
+            start=source_start,
+            end=source_end,
+        )
+        events: List[Dict[str, Any]] = []
+        for channel in target_channels:
+            segment_idx = int(segment_idx_by_channel[int(channel)])
+            params = anomaly_parameters_per_segment[int(segment_idx)]
+            coupling_strength = float(params.get("coupling_strength", 0.9))
+            transition_length = int(params.get("transition_length", 8))
+            before_window = self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+            )
+            candidate = matched_coupling_window(
+                reference=before_window,
+                anchor=anchor_window,
+                coupling_strength=coupling_strength,
+            )
+            candidate = BaseAnomaly.blend_with_reference(
+                candidate, before_window, transition_length
+            )
+            self._replace_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+                target_observed=candidate,
+            )
+            after_window = self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+            )
+            effective_delta = np.abs(after_window - before_window)
+            label_start, label_end = self._resolve_label_bounds_from_effect(
+                protocol_start=source_start,
+                protocol_end=source_end,
+                delta=effective_delta,
+                anomaly_type=anomaly_type,
+            )
+            labels[label_start:label_end, int(channel)] = 1
+            used_positions[int(channel)].append((source_start, source_end))
+            events.append(
+                build_event_record(
+                    start=int(label_start),
+                    end=int(label_end),
+                    channel=int(channel),
+                    anomaly_type=anomaly_type,
+                    group_id=int(group_id),
+                    group_channels=[int(ch) for ch in group_channels],
+                    affected_channels=[int(ch) for ch in target_channels],
+                    anomaly_object="shared_noise_coupling_change",
+                    channel_visible=False,
+                    purity_hint="multivariate_preferred",
+                    params=_to_builtin_types(params),
+                    source_start=int(source_start),
+                    source_end=int(source_end),
+                    extra={
+                        "anchor_channel": int(anchor_channel),
+                        "coupling_strength": float(coupling_strength),
+                    },
+                )
+            )
+        return events
+
+    def _apply_channel_rewiring_group(
+        self,
+        group_indices: List[int],
+        segment_plan: List[SegmentPlan],
+        base: np.ndarray,
+        channel_bos: List[Any],
+        labels: np.ndarray,
+        used_positions: Dict[int, List[Tuple[int, int]]],
+        anomaly_type: str,
+        anomaly_parameters_per_segment: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if len(group_indices) == 0:
+            return []
+        group_segments = [segment_plan[idx] for idx in group_indices]
+        source_start, source_end = group_source_bounds(group_segments)
+        group_id = int(group_segments[0].attrs.get("group_id", group_indices[0]))
+        group_channels = collect_group_channels(group_segments)
+        if len(group_channels) < 2 or source_end <= source_start:
+            return []
+        first_channel = int(group_channels[0])
+        second_channel = int(group_channels[1])
+        segment_idx_by_channel = {
+            int(segment_plan[idx].channel): int(idx) for idx in group_indices
+        }
+        transition_length = int(
+            anomaly_parameters_per_segment[
+                int(segment_idx_by_channel[first_channel])
+            ].get("transition_length", 8)
+        )
+        before_first = self._compose_channel_window_with_variations(
+            base=base,
+            bo=channel_bos[int(first_channel)],
+            channel=int(first_channel),
+            start=source_start,
+            end=source_end,
+        )
+        before_second = self._compose_channel_window_with_variations(
+            base=base,
+            bo=channel_bos[int(second_channel)],
+            channel=int(second_channel),
+            start=source_start,
+            end=source_end,
+        )
+        rewired_first, rewired_second = matched_rewiring_windows(
+            before_first, before_second
+        )
+        candidate_by_channel = {
+            int(first_channel): BaseAnomaly.blend_with_reference(
+                rewired_first, before_first, transition_length
+            ),
+            int(second_channel): BaseAnomaly.blend_with_reference(
+                rewired_second, before_second, transition_length
+            ),
+        }
+        events: List[Dict[str, Any]] = []
+        for channel, before_window in [
+            (first_channel, before_first),
+            (second_channel, before_second),
+        ]:
+            segment_idx = int(segment_idx_by_channel[int(channel)])
+            self._replace_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+                target_observed=candidate_by_channel[int(channel)],
+            )
+            after_window = self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+            )
+            effective_delta = np.abs(after_window - before_window)
+            label_start, label_end = self._resolve_label_bounds_from_effect(
+                protocol_start=source_start,
+                protocol_end=source_end,
+                delta=effective_delta,
+                anomaly_type=anomaly_type,
+            )
+            labels[label_start:label_end, int(channel)] = 1
+            used_positions[int(channel)].append((source_start, source_end))
+            events.append(
+                build_event_record(
+                    start=int(label_start),
+                    end=int(label_end),
+                    channel=int(channel),
+                    anomaly_type=anomaly_type,
+                    group_id=int(group_id),
+                    group_channels=[int(ch) for ch in group_channels],
+                    affected_channels=[int(first_channel), int(second_channel)],
+                    anomaly_object="channel_rewiring",
+                    channel_visible=True,
+                    purity_hint="marginally_matched_rewiring",
+                    params=_to_builtin_types(anomaly_parameters_per_segment[int(segment_idx)]),
+                    source_start=int(source_start),
+                    source_end=int(source_end),
+                    extra={"rewired_pair": [int(first_channel), int(second_channel)]},
+                )
+            )
+        return events
+
+    def _apply_lag_synchronization_group(
+        self,
+        group_indices: List[int],
+        segment_plan: List[SegmentPlan],
+        base: np.ndarray,
+        channel_bos: List[Any],
+        labels: np.ndarray,
+        used_positions: Dict[int, List[Tuple[int, int]]],
+        anomaly_type: str,
+        anomaly_parameters_per_segment: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if len(group_indices) == 0:
+            return []
+        group_segments = [segment_plan[idx] for idx in group_indices]
+        source_start, source_end = group_source_bounds(group_segments)
+        group_id = int(group_segments[0].attrs.get("group_id", group_indices[0]))
+        group_channels = collect_group_channels(group_segments)
+        if len(group_channels) < 2 or source_end <= source_start:
+            return []
+        anchor_channel = int(group_channels[0])
+        shifted_channels = [int(ch) for ch in group_channels[1:]]
+        segment_idx_by_channel = {
+            int(segment_plan[idx].channel): int(idx) for idx in group_indices
+        }
+        events: List[Dict[str, Any]] = []
+        for channel in shifted_channels:
+            segment_idx = int(segment_idx_by_channel[int(channel)])
+            params = anomaly_parameters_per_segment[int(segment_idx)]
+            lag_steps = int(params.get("lag_steps", 6))
+            transition_length = int(params.get("transition_length", 8))
+            full_series = self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=0,
+                end=self.config.length,
+            )
+            before_window = np.array(full_series[source_start:source_end], copy=True)
+            shifted_window, realized_lag = lag_shift_window(
+                series=full_series,
+                start=source_start,
+                end=source_end,
+                lag_steps=lag_steps,
+            )
+            candidate = BaseAnomaly.blend_with_reference(
+                shifted_window, before_window, transition_length
+            )
+            self._replace_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+                target_observed=candidate,
+            )
+            after_window = self._compose_channel_window_with_variations(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+            )
+            effective_delta = np.abs(after_window - before_window)
+            label_start, label_end = self._resolve_label_bounds_from_effect(
+                protocol_start=source_start,
+                protocol_end=source_end,
+                delta=effective_delta,
+                anomaly_type=anomaly_type,
+            )
+            labels[label_start:label_end, int(channel)] = 1
+            used_positions[int(channel)].append((source_start, source_end))
+            events.append(
+                build_event_record(
+                    start=int(label_start),
+                    end=int(label_end),
+                    channel=int(channel),
+                    anomaly_type=anomaly_type,
+                    group_id=int(group_id),
+                    group_channels=[int(ch) for ch in group_channels],
+                    affected_channels=[int(ch) for ch in shifted_channels],
+                    anomaly_object="lag_synchronization_shift",
+                    channel_visible=True,
+                    purity_hint="not_pure_local",
+                    params=_to_builtin_types(params),
+                    source_start=int(source_start),
+                    source_end=int(source_end),
+                    extra={
+                        "anchor_channel": int(anchor_channel),
+                        "realized_lag_steps": int(realized_lag),
+                    },
+                )
             )
         return events
 
