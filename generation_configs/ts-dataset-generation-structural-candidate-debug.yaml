@@ -1,0 +1,182 @@
+generator:
+  output_root: data/ts_dataset_structural_candidate_debug
+  master_seed: 20260401
+  overwrite_output: true
+  log_level: INFO
+  on_variant_failure: skip
+
+dataset:
+  length: 900
+  channels: 2
+  splits: [val]
+  instances_per_split: 2
+
+anomaly_policy:
+  density_range: [0.05, 0.06]
+  density_tolerance: 0.02
+  segment_count_range: [1, 2]
+  placement_policy: uniform
+  channel_policy: single-random
+  overlap_policy: global
+  length_normalization: resample
+  support_label_mode: effective_support
+  support_eps_mode: relative
+  support_eps_value: 0.05
+  min_effective_label_length_non_extremum: 2
+  max_placement_attempts: 2500
+  skip_density_incompatible_variants: true
+  segment_planner:
+    default:
+      planner: uniform_segments
+  special_anomaly_policies:
+    covariance-change:
+      channel_policy: paired-random
+      min_segment_length: 28
+    correlation-flip:
+      channel_policy: paired-random
+      min_segment_length: 28
+    lag-synchronization:
+      channel_policy: paired-random
+      min_segment_length: 24
+    shared-factor-break:
+      channel_policy: paired-random
+      min_segment_length: 28
+  min_segment_length_by_anomaly:
+    covariance-change: 28
+    correlation-flip: 28
+    lag-synchronization: 24
+    shared-factor-break: 28
+
+variants:
+  base_oscillations:
+    - sine
+    - cosine
+    - polynomial
+  anomaly_types:
+    - covariance-change
+    - correlation-flip
+    - lag-synchronization
+    - shared-factor-break
+  compatibility_mode: hard
+  profiles_per_pair: 1
+  pair_profiles: {}
+  base_parameter_policy: random_per_instance
+  base_channel_parameter_policy: random_per_instance
+  anomaly_parameter_policy: fixed_per_variant
+  base_channel_correlation:
+    shared_noise_weight: 0.88
+  base_oscillation_overrides:
+    sine:
+      frequency:
+        distribution: uniform
+        low: 6.0
+        high: 8.0
+      amplitude:
+        distribution: uniform
+        low: 0.55
+        high: 0.75
+      variance:
+        distribution: uniform
+        low: 0.12
+        high: 0.18
+    cosine:
+      frequency:
+        distribution: uniform
+        low: 6.0
+        high: 8.0
+      amplitude:
+        distribution: uniform
+        low: 0.55
+        high: 0.75
+      variance:
+        distribution: uniform
+        low: 0.12
+        high: 0.18
+    polynomial:
+      polynomial:
+        - 0.015
+        - 0.16
+      variance:
+        distribution: uniform
+        low: 0.08
+        high: 0.12
+  anomaly_overrides:
+    covariance-change:
+      coupling_strength: -0.95
+      transition_length: 12
+    correlation-flip:
+      target_correlation: -1.0
+      transition_length: 12
+    lag-synchronization:
+      lag_steps: 6
+      transition_length: 10
+    shared-factor-break:
+      shared_factor_scale: 0.0
+      transition_length: 12
+  variant_overrides:
+    polynomial__covariance-change:
+      base_channel_correlation:
+        shared_noise_weight: 0.94
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.09
+          high: 0.13
+    polynomial__correlation-flip:
+      base_channel_correlation:
+        shared_noise_weight: 0.95
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.10
+          high: 0.14
+      anomaly:
+        target_correlation: -1.0
+        transition_length: 14
+    polynomial__shared-factor-break:
+      base_channel_correlation:
+        shared_noise_weight: 0.95
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.10
+          high: 0.14
+      anomaly:
+        shared_factor_scale: 0.0
+        transition_length: 14
+    sine__shared-factor-break:
+      base_channel_correlation:
+        shared_noise_weight: 0.96
+      base_oscillation:
+        amplitude:
+          distribution: uniform
+          low: 0.40
+          high: 0.55
+        variance:
+          distribution: uniform
+          low: 0.16
+          high: 0.22
+    cosine__correlation-flip:
+      base_channel_correlation:
+        shared_noise_weight: 0.96
+      base_oscillation:
+        amplitude:
+          distribution: uniform
+          low: 0.40
+          high: 0.55
+        variance:
+          distribution: uniform
+          low: 0.16
+          high: 0.22
+
+plot:
+  enabled: true
+  dpi: 130
+  zoom_count: 4
+  zoom_margin: 36
+  zoom_margin_min: 18
+  zoom_margin_alpha: 0.6
+  zoom_fill_policy: repeat
+
+io:
+  csv_float_format: "%.8f"

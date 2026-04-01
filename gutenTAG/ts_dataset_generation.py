@@ -119,6 +119,15 @@ class SegmentPlan:
     attrs: Dict[str, Any] = field(default_factory=dict)
 
 
+def _validate_base_channel_correlation_mapping(mapping: Mapping[str, Any]) -> None:
+    """Validate channel-correlation mapping semantics."""
+    if not isinstance(mapping, Mapping):
+        raise ValueError("base_channel_correlation must be a mapping")
+    shared_noise_weight = float(dict(mapping).get("shared_noise_weight", 0.0))
+    if shared_noise_weight < 0.0 or shared_noise_weight > 1.0:
+        raise ValueError("base_channel_correlation.shared_noise_weight must be in [0, 1]")
+
+
 @dataclass
 class TSGeneratorConfig:
     """Runtime configuration for synthetic TS dataset generation.
@@ -618,11 +627,7 @@ class TSGeneratorConfig:
             )
         if not isinstance(self.base_channel_correlation, Mapping):
             raise ValueError("base_channel_correlation must be a mapping")
-        shared_noise_weight = float(
-            dict(self.base_channel_correlation).get("shared_noise_weight", 0.0)
-        )
-        if shared_noise_weight < 0.0 or shared_noise_weight > 1.0:
-            raise ValueError("base_channel_correlation.shared_noise_weight must be in [0, 1]")
+        _validate_base_channel_correlation_mapping(self.base_channel_correlation)
         if not isinstance(self.split_phase_shift, Mapping):
             raise ValueError("split_phase_shift must be a mapping")
         split_phase_cfg = dict(self.split_phase_shift)
@@ -1155,6 +1160,9 @@ class TSDatasetGenerator:
             if self.config.anomaly_parameter_policy == "fixed_per_variant"
             else None
         )
+        effective_base_channel_correlation = self._resolve_base_channel_correlation(
+            variant
+        )
 
         variant_config = {
             "variant_id": variant.variant_id,
@@ -1170,7 +1178,7 @@ class TSDatasetGenerator:
                     fixed_base_channel_parameters
                 ),
                 "channel_correlation": _to_builtin_types(
-                    self.config.base_channel_correlation
+                    effective_base_channel_correlation
                 ),
                 "split_phase_shift": _to_builtin_types(self.config.split_phase_shift),
             },
@@ -1461,13 +1469,19 @@ class TSDatasetGenerator:
         else:
             anomaly_parameters_instance = None
 
+        effective_base_channel_correlation = self._resolve_base_channel_correlation(
+            variant
+        )
+
         clean_bos = self._generate_base_channels(
             base_kind=variant.base_oscillation,
             base_parameters_per_channel=base_parameters_per_channel,
             seed=int(seeds["base_seed"]),
         )
         self._apply_shared_noise_correlation(
-            clean_bos, seed=int(seeds["base_shared_noise_seed"])
+            clean_bos,
+            seed=int(seeds["base_shared_noise_seed"]),
+            base_channel_correlation=effective_base_channel_correlation,
         )
         clean_base = self._stack_channel_timeseries(clean_bos)
         clean = self._apply_variations(clean_base, clean_bos)
@@ -1478,7 +1492,9 @@ class TSDatasetGenerator:
             seed=int(seeds["base_seed"]),
         )
         self._apply_shared_noise_correlation(
-            anomalous_bos, seed=int(seeds["base_shared_noise_seed"])
+            anomalous_bos,
+            seed=int(seeds["base_shared_noise_seed"]),
+            base_channel_correlation=effective_base_channel_correlation,
         )
         anomalous_base = self._stack_channel_timeseries(anomalous_bos)
 
@@ -1676,7 +1692,7 @@ class TSDatasetGenerator:
             "base_parameters_per_channel": _to_builtin_types(base_parameters_per_channel),
             "split_phase_shift": _to_builtin_types(split_phase_shift_info),
             "base_channel_correlation": _to_builtin_types(
-                self.config.base_channel_correlation
+                effective_base_channel_correlation
             ),
             "anomaly_parameters_instance": _to_builtin_types(
                 anomaly_parameters_instance
@@ -1794,12 +1810,42 @@ class TSDatasetGenerator:
     def _stack_channel_timeseries(self, channel_bos: List[Any]) -> np.ndarray:
         return np.column_stack([bo.timeseries for bo in channel_bos]).astype(np.float64)
 
-    def _shared_noise_weight(self) -> float:
-        weight = float(self.config.base_channel_correlation.get("shared_noise_weight", 0.0))
+    def _resolve_base_channel_correlation(self, variant: VariantSpec) -> Dict[str, Any]:
+        """Resolve effective channel-correlation config for one pair/variant."""
+        correlation: Dict[str, Any] = copy.deepcopy(dict(self.config.base_channel_correlation))
+        pair_override = self.config.variant_overrides.get(variant.pair_id, {})
+        if isinstance(pair_override, Mapping) and isinstance(
+            pair_override.get("base_channel_correlation"), Mapping
+        ):
+            correlation = _merge_dicts(
+                correlation, dict(pair_override["base_channel_correlation"])
+            )
+        variant_override = self.config.variant_overrides.get(variant.variant_id, {})
+        if isinstance(variant_override, Mapping) and isinstance(
+            variant_override.get("base_channel_correlation"), Mapping
+        ):
+            correlation = _merge_dicts(
+                correlation, dict(variant_override["base_channel_correlation"])
+            )
+        _validate_base_channel_correlation_mapping(correlation)
+        return correlation
+
+    def _shared_noise_weight(self, base_channel_correlation: Optional[Mapping[str, Any]] = None) -> float:
+        source = (
+            dict(base_channel_correlation)
+            if isinstance(base_channel_correlation, Mapping)
+            else dict(self.config.base_channel_correlation)
+        )
+        weight = float(source.get("shared_noise_weight", 0.0))
         return float(np.clip(weight, 0.0, 1.0))
 
-    def _apply_shared_noise_correlation(self, channel_bos: List[Any], seed: int) -> None:
-        shared_weight = self._shared_noise_weight()
+    def _apply_shared_noise_correlation(
+        self,
+        channel_bos: List[Any],
+        seed: int,
+        base_channel_correlation: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        shared_weight = self._shared_noise_weight(base_channel_correlation)
         if shared_weight <= 0.0 or len(channel_bos) <= 1:
             return
         noise_lengths = {

@@ -83,9 +83,23 @@ class TestCompatibility(TestCase):
                 mode="validated",
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             Compatibility.check(
                 anomaly="correlation-flip",
+                base_oscillation="cosine",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="correlation-flip",
+                base_oscillation="polynomial",
+                mode="validated",
+            )
+        )
+        self.assertFalse(
+            Compatibility.check(
+                anomaly="shared-factor-break",
                 base_oscillation="polynomial",
                 mode="validated",
             )

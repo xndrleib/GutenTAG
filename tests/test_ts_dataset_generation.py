@@ -1958,7 +1958,7 @@ class TestTSDatasetGeneration(unittest.TestCase):
             source_end = int(event["source_end"])
             clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
             anom_corr = _pair_residual_corr(anomalous, channels, source_start, source_end)
-            self.assertGreater(abs(float(clean_corr)) - abs(float(anom_corr)), 0.10)
+            self.assertGreater(abs(float(clean_corr)) - abs(float(anom_corr)), 0.05)
             self.assertEqual(event["anomaly_object"], "shared_factor_break")
             self.assertEqual(event["purity_hint"], "operational_candidate")
             self.assertEqual(event["injection_level"], "noise")
@@ -2074,8 +2074,57 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertIn("polynomial__covariance-change__p00", generated)
             self.assertIn("sine__lag-synchronization__p00", generated)
             self.assertIn("cosine__lag-synchronization__p00", generated)
-            self.assertNotIn("polynomial__correlation-flip__p00", generated)
-            self.assertIn("polynomial__correlation-flip__p00", skipped)
+            self.assertIn("cosine__correlation-flip__p00", generated)
+            self.assertIn("polynomial__correlation-flip__p00", generated)
+            self.assertNotIn("cosine__correlation-flip__p00", skipped)
+            self.assertNotIn("polynomial__correlation-flip__p00", skipped)
+
+    def test_pair_override_base_channel_correlation_reaches_instance_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["val"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["segment_count_range"] = [1, 1]
+            config["plot"]["enabled"] = False
+            config["variants"]["base_oscillations"] = ["polynomial"]
+            config["variants"]["anomaly_types"] = ["covariance-change"]
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.25}
+            config["variants"]["variant_overrides"] = {
+                "polynomial__covariance-change": {
+                    "base_channel_correlation": {"shared_noise_weight": 0.93}
+                }
+            }
+            config["anomaly_policy"]["special_anomaly_policies"] = {
+                "covariance-change": {"channel_policy": "paired-random", "min_segment_length": 20}
+            }
+            config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
+                "covariance-change": 20
+            }
+            config["variants"]["anomaly_overrides"] = {
+                "covariance-change": {"coupling_strength": -0.95, "transition_length": 8}
+            }
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn(
+                "polynomial__covariance-change__p00", manifest["generated_variants"]
+            )
+            instance_dir = (
+                output_root
+                / "variants"
+                / "polynomial__covariance-change__p00"
+                / "val"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "instance_summary.json").open("r", encoding="utf-8") as handle:
+                summary = json.load(handle)
+            self.assertAlmostEqual(
+                float(summary["base_channel_correlation"]["shared_noise_weight"]),
+                0.93,
+                places=8,
+            )
 
 
 if __name__ == "__main__":

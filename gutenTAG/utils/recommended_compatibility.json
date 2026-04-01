@@ -13,13 +13,10 @@
   "channel-rewiring": [],
   "correlation-flip": [
     "cosine",
-    "polynomial",
-    "random-walk"
+    "polynomial"
   ],
   "covariance-change": [
-    "cosine",
-    "polynomial",
-    "random-walk"
+    "polynomial"
   ],
   "extremum": [],
   "frequency": [
@@ -83,11 +80,7 @@
     "sine",
     "square"
   ],
-  "shared-factor-break": [
-    "cylinder-bell-funnel",
-    "mls",
-    "polynomial"
-  ],
+  "shared-factor-break": [],
   "trend": [
     "cosine",
     "cylinder-bell-funnel",

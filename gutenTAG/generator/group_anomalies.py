@@ -14,6 +14,7 @@ from .multivariate_ops import (
     has_shared_noise_decomposition,
     lag_shift_window,
     matched_coupling_window,
+    mixed_shared_noise_window_from_components,
     rotated_pair_windows,
     shared_noise_window_from_components,
 )
@@ -34,7 +35,7 @@ def _latent_shared_noise_attrs(
     bo: Any,
     start: int,
     end: int,
-) -> tuple[np.ndarray, np.ndarray, float, float] | None:
+) -> tuple[np.ndarray, np.ndarray, float, float, float] | None:
     if not has_shared_noise_decomposition(bo, start, end):
         return None
     idio = np.asarray(getattr(bo, "_idio_noise_component")[start:end], dtype=np.float64)
@@ -43,7 +44,8 @@ def _latent_shared_noise_attrs(
     )
     mean = float(getattr(bo, "_noise_mean"))
     shared_weight = float(getattr(bo, "_shared_noise_weight"))
-    return idio, shared, mean, shared_weight
+    residual_weight = float(getattr(bo, "_residual_noise_weight", np.sqrt(max(0.0, 1.0 - shared_weight**2))))
+    return idio, shared, mean, shared_weight, residual_weight
 
 
 def apply_group_anomaly(
@@ -302,12 +304,13 @@ def _apply_correlation_flip_group(
         latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
         injection_level = "observed_window"
         if latent is not None and target_correlation is not None:
-            idio, shared, noise_mean, _ = latent
-            candidate_noise = shared_noise_window_from_components(
+            idio, shared, noise_mean, current_shared_weight, _ = latent
+            candidate_noise = mixed_shared_noise_window_from_components(
                 idiosyncratic_component=idio,
                 shared_component=shared,
                 noise_mean=noise_mean,
-                target_shared_weight=float(target_correlation),
+                current_shared_weight=current_shared_weight,
+                target_alignment=float(target_correlation),
             )
             runtime.replace_noise(
                 bo=channel_bos[int(channel)],
@@ -371,6 +374,7 @@ def _apply_correlation_flip_group(
                 extra={
                     "anchor_channel": int(anchor_channel),
                     "target_correlation": target_correlation,
+                    "target_alignment": target_correlation,
                     "injection_level": injection_level,
                 },
             )
@@ -427,7 +431,7 @@ def _apply_covariance_change_group(
         latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
         injection_level = "observed_window"
         if latent is not None:
-            idio, shared, noise_mean, _ = latent
+            idio, shared, noise_mean, _, _ = latent
             candidate_noise = shared_noise_window_from_components(
                 idiosyncratic_component=idio,
                 shared_component=shared,
@@ -757,15 +761,13 @@ def _apply_shared_factor_break_group(
         latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
         injection_level = "observed_window"
         if latent is not None:
-            idio, shared, noise_mean, current_shared_weight = latent
-            target_shared_weight = float(
-                np.clip(current_shared_weight * shared_factor_scale, -0.999, 0.999)
-            )
-            candidate_noise = shared_noise_window_from_components(
+            idio, shared, noise_mean, current_shared_weight, _ = latent
+            candidate_noise = mixed_shared_noise_window_from_components(
                 idiosyncratic_component=idio,
                 shared_component=shared,
                 noise_mean=noise_mean,
-                target_shared_weight=target_shared_weight,
+                current_shared_weight=current_shared_weight,
+                target_alignment=shared_factor_scale,
             )
             runtime.replace_noise(
                 bo=channel_bos[int(channel)],
@@ -829,6 +831,7 @@ def _apply_shared_factor_break_group(
                 extra={
                     "anchor_channel": int(anchor_channel),
                     "shared_factor_scale": float(shared_factor_scale),
+                    "target_alignment": float(shared_factor_scale),
                     "injection_level": injection_level,
                 },
             )

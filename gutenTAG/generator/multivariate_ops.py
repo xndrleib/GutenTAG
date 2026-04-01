@@ -75,6 +75,76 @@ def shared_noise_window_from_components(
     )
 
 
+def _deterministic_decorrelated_component(values: np.ndarray) -> np.ndarray:
+    """Build a same-shape surrogate component with weak correlation to `values`."""
+    series = np.asarray(values, dtype=np.float64)
+    n = int(series.shape[0])
+    if n <= 1:
+        return np.array(series, dtype=np.float64, copy=True)
+    centered = series - float(np.mean(series))
+    if n <= 3:
+        return centered[::-1].copy()
+    candidates: list[np.ndarray] = []
+    candidates.append(np.roll(centered, max(1, n // 2)))
+    candidates.append(centered[::-1].copy())
+    even_odd_indices = np.concatenate((np.arange(0, n, 2), np.arange(1, n, 2)))
+    candidates.append(centered[even_odd_indices])
+    for step in range(max(2, n // 2 - 2), 1, -1):
+        if np.gcd(step, n) != 1:
+            continue
+        indices = (np.arange(n, dtype=int) * step + 1) % n
+        candidates.append(centered[indices])
+        if len(candidates) >= 6:
+            break
+
+    best = candidates[0]
+    best_corr = float("inf")
+    for candidate in candidates:
+        corr = float(np.corrcoef(centered, candidate)[0, 1]) if n > 2 else 0.0
+        score = abs(corr) if np.isfinite(corr) else float("inf")
+        if score < best_corr:
+            best = candidate
+            best_corr = score
+
+    surrogate_z, _, _ = _safe_standardize(best)
+    shared_scale = float(np.std(centered))
+    return (shared_scale * surrogate_z).astype(np.float64)
+
+
+def mixed_shared_noise_window_from_components(
+    *,
+    idiosyncratic_component: np.ndarray,
+    shared_component: np.ndarray,
+    noise_mean: float,
+    current_shared_weight: float,
+    target_alignment: float,
+) -> np.ndarray:
+    """Recompose noise with preserved shared-energy magnitude but changed alignment.
+
+    `target_alignment=1` keeps the original shared component, `0` replaces it with a
+    decorrelated surrogate, and `-1` flips it while preserving local scale.
+    """
+    idio = np.asarray(idiosyncratic_component, dtype=np.float64)
+    shared = np.asarray(shared_component, dtype=np.float64)
+    if idio.shape != shared.shape:
+        raise ValueError("Noise components must have the same shape.")
+    magnitude = float(np.clip(abs(current_shared_weight), 0.0, 0.999))
+    residual_weight = float(np.sqrt(max(0.0, 1.0 - magnitude**2)))
+    shared_centered = shared - float(np.mean(shared))
+    shared_z, _, _ = _safe_standardize(shared_centered)
+    surrogate = _deterministic_decorrelated_component(shared_centered)
+    surrogate_z, _, _ = _safe_standardize(surrogate)
+    alignment = float(np.clip(target_alignment, -0.999, 0.999))
+    orth_weight = float(np.sqrt(max(0.0, 1.0 - alignment**2)))
+    mixed_shared = alignment * shared_z + orth_weight * surrogate_z
+    mixed_shared_z, _, _ = _safe_standardize(mixed_shared)
+    shared_scale = float(np.std(shared_centered))
+    shared_candidate = shared_scale * mixed_shared_z
+    return (
+        float(noise_mean) + residual_weight * idio + magnitude * shared_candidate
+    ).astype(np.float64)
+
+
 def _safe_standardize(values: np.ndarray) -> tuple[np.ndarray, float, float]:
     series = np.asarray(values, dtype=np.float64)
     mean = float(np.mean(series))

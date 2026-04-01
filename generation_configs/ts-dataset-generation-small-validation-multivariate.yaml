@@ -74,6 +74,7 @@ variants:
     - pattern-shift
     - mode-correlation
     - covariance-change
+    - correlation-flip
     - lag-synchronization
   compatibility_mode: validated
   skip_base_oscillations: []
@@ -201,6 +202,38 @@ variants:
     shared-factor-break:
       shared_factor_scale: 0.0
       transition_length: 8
+  variant_overrides:
+    polynomial__covariance-change:
+      base_channel_correlation:
+        shared_noise_weight: 0.94
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.09
+          high: 0.13
+    polynomial__correlation-flip:
+      base_channel_correlation:
+        shared_noise_weight: 0.95
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.10
+          high: 0.14
+      anomaly:
+        target_correlation: -1.0
+        transition_length: 14
+    cosine__correlation-flip:
+      base_channel_correlation:
+        shared_noise_weight: 0.96
+      base_oscillation:
+        amplitude:
+          distribution: uniform
+          low: 0.40
+          high: 0.55
+        variance:
+          distribution: uniform
+          low: 0.16
+          high: 0.22
 
 plot:
   enabled: true
