@@ -5,7 +5,9 @@ from typing import Any
 import numpy as np
 
 
-def compose_observed_window(base: np.ndarray, bo: Any, channel: int, start: int, end: int) -> np.ndarray:
+def compose_observed_window(
+    base: np.ndarray, bo: Any, channel: int, start: int, end: int
+) -> np.ndarray:
     """Compose a single observed channel window from base and fixed variations."""
     result = np.asarray(base[start:end, channel], dtype=np.float64).copy()
     if getattr(bo, "noise", None) is not None:
@@ -35,6 +37,42 @@ def replace_observed_window(
     if getattr(bo, "offset", None) is not None:
         candidate = candidate - float(bo.offset)
     base[start:end, channel] = candidate.astype(np.float64, copy=False)
+
+
+def has_shared_noise_decomposition(bo: Any, start: int, end: int) -> bool:
+    """Return whether a channel exposes latent shared-noise components."""
+    idio = getattr(bo, "_idio_noise_component", None)
+    shared = getattr(bo, "_shared_noise_component", None)
+    mean = getattr(bo, "_noise_mean", None)
+    if idio is None or shared is None or mean is None:
+        return False
+    if getattr(bo, "noise", None) is None:
+        return False
+    n = int(np.asarray(bo.noise).shape[0])
+    return 0 <= int(start) <= int(end) <= n
+
+
+def shared_noise_window_from_components(
+    *,
+    idiosyncratic_component: np.ndarray,
+    shared_component: np.ndarray,
+    noise_mean: float,
+    target_shared_weight: float,
+) -> np.ndarray:
+    """Recompose a channel-noise window with a changed shared component weight.
+
+    The construction preserves the channel's local noise scale by keeping the
+    squared sum of the idiosyncratic and shared weights equal to one.
+    """
+    idio = np.asarray(idiosyncratic_component, dtype=np.float64)
+    shared = np.asarray(shared_component, dtype=np.float64)
+    if idio.shape != shared.shape:
+        raise ValueError("Noise components must have the same shape.")
+    shared_weight = float(np.clip(target_shared_weight, -0.999, 0.999))
+    idio_weight = float(np.sqrt(max(0.0, 1.0 - shared_weight**2)))
+    return (float(noise_mean) + idio_weight * idio + shared_weight * shared).astype(
+        np.float64
+    )
 
 
 def _safe_standardize(values: np.ndarray) -> tuple[np.ndarray, float, float]:

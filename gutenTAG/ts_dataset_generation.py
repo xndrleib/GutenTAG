@@ -1808,6 +1808,11 @@ class TSDatasetGenerator:
                 continue
             shared_component = shared_noise * channel_std
             mixed = residual_weight * centered + shared_weight * shared_component
+            bo._noise_mean = float(mean)
+            bo._idio_noise_component = centered.astype(np.float64)
+            bo._shared_noise_component = shared_component.astype(np.float64)
+            bo._shared_noise_weight = float(shared_weight)
+            bo._residual_noise_weight = float(residual_weight)
             bo.noise = (mixed + mean).astype(np.float64)
 
     def _apply_variations(self, base: np.ndarray, channel_bos: List[Any]) -> np.ndarray:
@@ -1869,6 +1874,26 @@ class TSDatasetGenerator:
             end=end_i,
             target_observed=target_observed,
         )
+
+    def _compose_channel_noise_window(self, bo: Any, start: int, end: int) -> np.ndarray:
+        start_i = max(0, min(int(start), self.config.length))
+        end_i = max(start_i, min(int(end), self.config.length))
+        if getattr(bo, "noise", None) is None:
+            return np.zeros(end_i - start_i, dtype=np.float64)
+        return np.asarray(bo.noise[start_i:end_i], dtype=np.float64).copy()
+
+    def _replace_channel_noise_window(
+        self,
+        bo: Any,
+        start: int,
+        end: int,
+        target_noise: np.ndarray,
+    ) -> None:
+        start_i = max(0, min(int(start), self.config.length))
+        end_i = max(start_i, min(int(end), self.config.length))
+        if getattr(bo, "noise", None) is None:
+            bo.noise = np.zeros(self.config.length, dtype=np.float64)
+        bo.noise[start_i:end_i] = np.asarray(target_noise, dtype=np.float64)
 
     def _sample_segment_plan(
         self,
@@ -4009,6 +4034,8 @@ class TSDatasetGenerator:
             runtime=GroupAnomalyRuntime(
                 compose_window=self._compose_channel_window_with_variations,
                 replace_window=self._replace_channel_window_with_variations,
+                compose_noise=self._compose_channel_noise_window,
+                replace_noise=self._replace_channel_noise_window,
                 resolve_label_bounds=self._resolve_label_bounds_from_effect,
                 to_builtin=_to_builtin_types,
             ),

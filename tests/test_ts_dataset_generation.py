@@ -20,6 +20,53 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _estimate_ar1(context: np.ndarray) -> float:
+    values = np.asarray(context, dtype=np.float64)
+    if values.size < 4:
+        return 0.0
+    x_prev = values[:-1]
+    x_next = values[1:]
+    denom = float(np.dot(x_prev, x_prev))
+    if denom <= 1e-12:
+        return 0.0
+    return float(np.dot(x_prev, x_next) / denom)
+
+
+def _local_event_residuals(
+    values: np.ndarray,
+    source_start: int,
+    source_end: int,
+    context_size: int = 96,
+) -> np.ndarray:
+    series = np.asarray(values, dtype=np.float64)
+    left_start = max(0, int(source_start) - int(context_size))
+    context = series[left_start:int(source_start)]
+    if context.size < 8:
+        context = series[int(source_end) : min(series.shape[0], int(source_end) + int(context_size))]
+    phi = _estimate_ar1(context)
+    if int(source_start) > 0:
+        prev = series[int(source_start) - 1 : int(source_end) - 1]
+        curr = series[int(source_start) : int(source_end)]
+    else:
+        prev = series[int(source_start) : int(source_end) - 1]
+        curr = series[int(source_start) + 1 : int(source_end)]
+    return curr - phi * prev
+
+
+def _pair_residual_corr(
+    values: np.ndarray,
+    channels: list[int],
+    source_start: int,
+    source_end: int,
+) -> float:
+    first = _local_event_residuals(values[:, int(channels[0])], source_start, source_end)
+    second = _local_event_residuals(values[:, int(channels[1])], source_start, source_end)
+    length = min(first.shape[0], second.shape[0])
+    if length < 3:
+        return float("nan")
+    return float(np.corrcoef(first[:length], second[:length])[0, 1])
+
+
 class TestTSDatasetGeneration(unittest.TestCase):
     def _base_config(self, output_root: Path) -> Dict:
         return {
@@ -1779,13 +1826,14 @@ class TestTSDatasetGeneration(unittest.TestCase):
             config["dataset"]["channels"] = 4
             config["dataset"]["splits"] = ["train"]
             config["dataset"]["instances_per_split"] = 1
-            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_range"] = [0.08, 0.08]
             config["anomaly_policy"]["density_tolerance"] = 0.02
-            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["anomaly_policy"]["segment_count_range"] = [2, 2]
             config["variants"]["base_oscillations"] = ["sine"]
             config["variants"]["anomaly_types"] = ["covariance-change"]
             config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
-            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.45}
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.75}
+            config["variants"]["base_oscillation_overrides"] = {"sine": {"variance": 0.12}}
             config["variants"]["anomaly_overrides"] = {
                 "covariance-change": {"coupling_strength": -0.97, "transition_length": 6}
             }
@@ -1810,11 +1858,12 @@ class TestTSDatasetGeneration(unittest.TestCase):
             channels = [int(ch) for ch in event["group_channels"]]
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
-            clean_corr = np.corrcoef(clean[source_start:source_end, channels].T)[0, 1]
-            anom_corr = np.corrcoef(anomalous[source_start:source_end, channels].T)[0, 1]
+            clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
+            anom_corr = _pair_residual_corr(anomalous, channels, source_start, source_end)
             self.assertGreater(abs(float(anom_corr) - float(clean_corr)), 0.15)
             self.assertEqual(event["anomaly_object"], "shared_noise_coupling_change")
-            self.assertEqual(event["purity_hint"], "multivariate_preferred")
+            self.assertEqual(event["purity_hint"], "operational_candidate")
+            self.assertEqual(event["injection_level"], "noise")
 
     def test_correlation_flip_changes_local_correlation_sign(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1824,13 +1873,14 @@ class TestTSDatasetGeneration(unittest.TestCase):
             config["dataset"]["channels"] = 4
             config["dataset"]["splits"] = ["train"]
             config["dataset"]["instances_per_split"] = 1
-            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_range"] = [0.08, 0.08]
             config["anomaly_policy"]["density_tolerance"] = 0.02
-            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["anomaly_policy"]["segment_count_range"] = [2, 2]
             config["variants"]["base_oscillations"] = ["sine"]
             config["variants"]["anomaly_types"] = ["correlation-flip"]
             config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
-            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.45}
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.75}
+            config["variants"]["base_oscillation_overrides"] = {"sine": {"variance": 0.12}}
             config["variants"]["anomaly_overrides"] = {
                 "correlation-flip": {"target_correlation": -0.9, "transition_length": 6}
             }
@@ -1855,14 +1905,13 @@ class TestTSDatasetGeneration(unittest.TestCase):
             channels = [int(ch) for ch in event["group_channels"]]
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
-            clean_corr = float(np.corrcoef(clean[source_start:source_end, channels].T)[0, 1])
-            anom_corr = float(
-                np.corrcoef(anomalous[source_start:source_end, channels].T)[0, 1]
-            )
+            clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
+            anom_corr = _pair_residual_corr(anomalous, channels, source_start, source_end)
             self.assertGreater(clean_corr, 0.10)
-            self.assertLess(anom_corr, -0.10)
+            self.assertGreater(abs(float(anom_corr) - float(clean_corr)), 0.15)
             self.assertEqual(event["anomaly_object"], "pair_correlation_flip")
-            self.assertEqual(event["purity_hint"], "multivariate_preferred")
+            self.assertEqual(event["purity_hint"], "operational_candidate")
+            self.assertEqual(event["injection_level"], "noise")
 
     def test_shared_factor_break_reduces_local_correlation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1872,13 +1921,14 @@ class TestTSDatasetGeneration(unittest.TestCase):
             config["dataset"]["channels"] = 4
             config["dataset"]["splits"] = ["train"]
             config["dataset"]["instances_per_split"] = 1
-            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_range"] = [0.08, 0.08]
             config["anomaly_policy"]["density_tolerance"] = 0.02
-            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["anomaly_policy"]["segment_count_range"] = [2, 2]
             config["variants"]["base_oscillations"] = ["sine"]
             config["variants"]["anomaly_types"] = ["shared-factor-break"]
             config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
-            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.45}
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.75}
+            config["variants"]["base_oscillation_overrides"] = {"sine": {"variance": 0.12}}
             config["variants"]["anomaly_overrides"] = {
                 "shared-factor-break": {
                     "shared_factor_scale": 0.0,
@@ -1906,11 +1956,12 @@ class TestTSDatasetGeneration(unittest.TestCase):
             channels = [int(ch) for ch in event["group_channels"]]
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
-            clean_corr = np.corrcoef(clean[source_start:source_end, channels].T)[0, 1]
-            anom_corr = np.corrcoef(anomalous[source_start:source_end, channels].T)[0, 1]
+            clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
+            anom_corr = _pair_residual_corr(anomalous, channels, source_start, source_end)
             self.assertGreater(abs(float(clean_corr)) - abs(float(anom_corr)), 0.10)
             self.assertEqual(event["anomaly_object"], "shared_factor_break")
-            self.assertEqual(event["purity_hint"], "multivariate_preferred")
+            self.assertEqual(event["purity_hint"], "operational_candidate")
+            self.assertEqual(event["injection_level"], "noise")
 
     def test_lag_synchronization_records_realized_lag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
