@@ -1,20 +1,20 @@
 generator:
-  output_root: data/ts_dataset_small_validation_multivariate
+  output_root: data/debug_compatibility_sweep
   master_seed: 20260401
   overwrite_output: true
   log_level: INFO
   on_variant_failure: skip
 
 dataset:
-  length: 800
-  channels: 4
+  length: 480
+  channels: 2
   splits: [val]
-  instances_per_split: 2
+  instances_per_split: 1
 
 anomaly_policy:
-  density_range: [0.05, 0.08]
-  density_tolerance: 0.03
-  segment_count_range: [1, 2]
+  density_range: [0.05, 0.05]
+  density_tolerance: 0.08
+  segment_count_range: [1, 1]
   placement_policy: uniform
   channel_policy: single-random
   overlap_policy: global
@@ -24,7 +24,7 @@ anomaly_policy:
   support_eps_value: 0.05
   min_effective_label_length_non_extremum: 2
   max_placement_attempts: 2500
-  skip_density_incompatible_variants: true
+  skip_density_incompatible_variants: false
   segment_planner:
     default:
       planner: uniform_segments
@@ -33,7 +33,6 @@ anomaly_policy:
   special_anomaly_policies:
     mode-correlation:
       channel_policy: paired-random
-      density_tolerance: 0.10
       min_segment_length: 8
     covariance-change:
       channel_policy: paired-random
@@ -51,8 +50,8 @@ anomaly_policy:
       channel_policy: paired-random
       min_segment_length: 20
   min_segment_length_by_anomaly:
-    pattern: 6
-    pattern-shift: 6
+    pattern: 8
+    pattern-shift: 8
     mode-correlation: 8
     covariance-change: 20
     correlation-flip: 20
@@ -64,18 +63,32 @@ variants:
   base_oscillations:
     - sine
     - cosine
-    - polynomial
     - square
-    - sawtooth
+    - random-walk
+    - cylinder-bell-funnel
+    - ecg
+    - polynomial
     - random-mode-jump
+    - sawtooth
+    - dirichlet
     - mls
   anomaly_types:
+    - amplitude
+    - correlation-flip
+    - covariance-change
+    - channel-rewiring
+    - extremum
+    - frequency
+    - lag-synchronization
+    - mean
+    - mode-correlation
     - pattern
     - pattern-shift
-    - mode-correlation
-    - covariance-change
-    - lag-synchronization
-  compatibility_mode: validated
+    - platform
+    - shared-factor-break
+    - trend
+    - variance
+  compatibility_mode: hard
   skip_base_oscillations: []
   skip_anomaly_types: []
   disabled_anomaly_types: []
@@ -126,32 +139,6 @@ variants:
         distribution: int_uniform
         low: 1
         high: 500
-    random-walk:
-      smoothing:
-        distribution: uniform
-        low: 0.008
-        high: 0.02
-      variance:
-        distribution: uniform
-        low: 0.04
-        high: 0.07
-    polynomial:
-      polynomial:
-        - 0.03
-        - 0.35
-      variance:
-        distribution: uniform
-        low: 0.04
-        high: 0.07
-    mls:
-      complexity:
-        distribution: int_uniform
-        low: 6
-        high: 8
-      variance:
-        distribution: uniform
-        low: 0.04
-        high: 0.07
   base_channel_overrides:
     square:
       phase:
@@ -185,7 +172,6 @@ variants:
       transition_window: 8
       crossfade_mode: cosine
       min_effect_delta: 0.12
-    mode-correlation: {}
     covariance-change:
       coupling_strength: -0.95
       transition_length: 8
@@ -203,9 +189,9 @@ variants:
       transition_length: 8
 
 plot:
-  enabled: true
-  dpi: 130
-  zoom_count: 4
+  enabled: false
+  dpi: 120
+  zoom_count: 2
   zoom_margin: 36
   zoom_margin_min: 18
   zoom_margin_alpha: 0.6

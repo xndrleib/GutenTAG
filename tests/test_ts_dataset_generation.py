@@ -1999,6 +1999,84 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertTrue(any(abs(value) > 0 for value in realized))
             self.assertTrue(all(event["purity_hint"] == "not_pure_local" for event in events))
 
+    def test_recommended_compatibility_mode_skips_unvalidated_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["val"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["segment_count_range"] = [1, 1]
+            config["plot"]["enabled"] = False
+            config["variants"]["base_oscillations"] = ["sine", "polynomial"]
+            config["variants"]["anomaly_types"] = ["channel-rewiring", "covariance-change"]
+            config["variants"]["compatibility_mode"] = "recommended"
+            config["anomaly_policy"]["special_anomaly_policies"] = {
+                "channel-rewiring": {"channel_policy": "paired-random", "min_segment_length": 20},
+                "covariance-change": {"channel_policy": "paired-random", "min_segment_length": 20},
+            }
+            config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
+                "channel-rewiring": 20,
+                "covariance-change": 20,
+            }
+            config["variants"]["anomaly_overrides"] = {
+                "channel-rewiring": {"rotation_degrees": 25, "transition_length": 8},
+                "covariance-change": {"coupling_strength": -0.95, "transition_length": 8},
+            }
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+
+            self.assertIn(
+                "polynomial__covariance-change__p00", manifest["generated_variants"]
+            )
+            self.assertNotIn(
+                "sine__channel-rewiring__p00", manifest["generated_variants"]
+            )
+            skipped = {entry["variant_id"] for entry in manifest["skipped_variants"]}
+            self.assertIn("sine__channel-rewiring__p00", skipped)
+
+    def test_validated_compatibility_mode_admits_only_curated_structural_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["val"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["segment_count_range"] = [1, 1]
+            config["plot"]["enabled"] = False
+            config["variants"]["base_oscillations"] = ["sine", "cosine", "polynomial"]
+            config["variants"]["anomaly_types"] = [
+                "correlation-flip",
+                "covariance-change",
+                "lag-synchronization",
+            ]
+            config["variants"]["compatibility_mode"] = "validated"
+            config["anomaly_policy"]["special_anomaly_policies"] = {
+                "correlation-flip": {"channel_policy": "paired-random", "min_segment_length": 20},
+                "covariance-change": {"channel_policy": "paired-random", "min_segment_length": 20},
+                "lag-synchronization": {"channel_policy": "paired-random", "min_segment_length": 20},
+            }
+            config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
+                "correlation-flip": 20,
+                "covariance-change": 20,
+                "lag-synchronization": 20,
+            }
+            config["variants"]["anomaly_overrides"] = {
+                "correlation-flip": {"target_correlation": -0.95, "transition_length": 8},
+                "covariance-change": {"coupling_strength": -0.95, "transition_length": 8},
+                "lag-synchronization": {"lag_steps": 6, "transition_length": 8},
+            }
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            generated = set(manifest["generated_variants"])
+            skipped = {entry["variant_id"] for entry in manifest["skipped_variants"]}
+
+            self.assertIn("polynomial__covariance-change__p00", generated)
+            self.assertIn("sine__lag-synchronization__p00", generated)
+            self.assertIn("cosine__lag-synchronization__p00", generated)
+            self.assertNotIn("polynomial__correlation-flip__p00", generated)
+            self.assertIn("polynomial__correlation-flip__p00", skipped)
+
 
 if __name__ == "__main__":
     unittest.main()

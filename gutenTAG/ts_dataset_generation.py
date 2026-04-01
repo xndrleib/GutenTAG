@@ -152,6 +152,12 @@ class TSGeneratorConfig:
         Explicit base-oscillation list. ``None`` means all registered kinds.
     anomaly_types : Optional[List[str]]
         Explicit anomaly type list. ``None`` means all available kinds.
+    compatibility_mode : str
+        Compatibility filter used when enumerating base/anomaly pairs.
+        ``"hard"`` keeps the full mechanically supported matrix, while
+        ``"recommended"`` restricts generation to pairs that passed the
+        multi-seed debug sweep, and ``"validated"`` keeps only the
+        production-admitted subset of those pairs.
     skip_base_oscillations : List[str]
         Base oscillations removed from generation.
     skip_anomaly_types : List[str]
@@ -217,6 +223,7 @@ class TSGeneratorConfig:
     overlap_policy: str = "global"
     base_oscillations: Optional[List[str]] = None
     anomaly_types: Optional[List[str]] = None
+    compatibility_mode: str = "hard"
     skip_base_oscillations: List[str] = field(default_factory=list)
     skip_anomaly_types: List[str] = field(default_factory=list)
     disabled_anomaly_types: List[str] = field(default_factory=list)
@@ -377,6 +384,12 @@ class TSGeneratorConfig:
                     variants_cfg.get("anomaly_types", config.get("anomaly_types", []))
                 )
                 or None
+            ),
+            compatibility_mode=str(
+                variants_cfg.get(
+                    "compatibility_mode",
+                    config.get("compatibility_mode", "hard"),
+                )
             ),
             skip_base_oscillations=_optional_str_list(
                 variants_cfg.get(
@@ -572,6 +585,10 @@ class TSGeneratorConfig:
             raise ValueError("channel_policy='paired-random' requires dataset.channels >= 2")
         if self.overlap_policy not in ("global", "per_channel"):
             raise ValueError("overlap_policy must be one of {'global','per_channel'}")
+        if self.compatibility_mode not in ("hard", "recommended", "validated"):
+            raise ValueError(
+                "compatibility_mode must be one of {'hard','recommended','validated'}"
+            )
         if self.profiles_per_pair <= 0:
             raise ValueError("profiles_per_pair must be > 0")
         if self.base_parameter_policy not in (
@@ -748,6 +765,7 @@ class TSGeneratorConfig:
                 "variants": {
                     "base_oscillations": self.base_oscillations,
                     "anomaly_types": self.anomaly_types,
+                    "compatibility_mode": self.compatibility_mode,
                     "skip_base_oscillations": self.skip_base_oscillations,
                     "skip_anomaly_types": self.skip_anomaly_types,
                     "disabled_anomaly_types": self.disabled_anomaly_types,
@@ -977,12 +995,20 @@ class TSDatasetGenerator:
                         )
                         continue
 
-                    compatible = Compatibility.check(anomaly_kind, base_kind)
+                    compatible = Compatibility.check(
+                        anomaly_kind,
+                        base_kind,
+                        mode=self.config.compatibility_mode,
+                    )
                     if not compatible:
                         skipped.append(
                             {
                                 "variant_id": variant.variant_id,
-                                "reason": "Incompatible (base_oscillation, anomaly_type) pair.",
+                                "reason": (
+                                    "Incompatible (base_oscillation, anomaly_type) "
+                                    f"pair under compatibility_mode="
+                                    f"{self.config.compatibility_mode}."
+                                ),
                             }
                         )
                         continue

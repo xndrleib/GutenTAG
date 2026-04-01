@@ -1,6 +1,7 @@
 from unittest import TestCase
 
 from gutenTAG.config.parser import ConfigParser
+from gutenTAG.utils.compatibility import Compatibility
 
 
 class TestCompatibility(TestCase):
@@ -64,3 +65,42 @@ class TestCompatibility(TestCase):
 
     def test_compatibility_breaks_and_ignores(self):
         ConfigParser(skip_errors=True).parse(self.breaking_config)
+
+    def test_recommended_matrix_disables_unvalidated_pairs(self):
+        self.assertFalse(
+            Compatibility.check(
+                anomaly="channel-rewiring",
+                base_oscillation="sine",
+                mode="recommended",
+            )
+        )
+
+    def test_validated_matrix_keeps_only_admitted_structural_pairs(self):
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="covariance-change",
+                base_oscillation="polynomial",
+                mode="validated",
+            )
+        )
+        self.assertFalse(
+            Compatibility.check(
+                anomaly="correlation-flip",
+                base_oscillation="polynomial",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="lag-synchronization",
+                base_oscillation="sine",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="covariance-change",
+                base_oscillation="polynomial",
+                mode="recommended",
+            )
+        )

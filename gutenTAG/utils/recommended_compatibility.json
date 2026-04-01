@@ -1,0 +1,114 @@
+{
+  "amplitude": [
+    "cosine",
+    "cylinder-bell-funnel",
+    "dirichlet",
+    "ecg",
+    "mls",
+    "random-walk",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "channel-rewiring": [],
+  "correlation-flip": [
+    "cosine",
+    "polynomial",
+    "random-walk"
+  ],
+  "covariance-change": [
+    "cosine",
+    "polynomial",
+    "random-walk"
+  ],
+  "extremum": [],
+  "frequency": [
+    "cosine",
+    "dirichlet",
+    "ecg",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "lag-synchronization": [
+    "cosine",
+    "dirichlet",
+    "random-mode-jump",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "mean": [
+    "cosine",
+    "cylinder-bell-funnel",
+    "dirichlet",
+    "ecg",
+    "mls",
+    "polynomial",
+    "random-walk",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "mode-correlation": [
+    "random-mode-jump"
+  ],
+  "pattern": [
+    "cosine",
+    "cylinder-bell-funnel",
+    "dirichlet",
+    "ecg",
+    "mls",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "pattern-shift": [
+    "cosine",
+    "dirichlet",
+    "ecg",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "platform": [
+    "cosine",
+    "cylinder-bell-funnel",
+    "dirichlet",
+    "ecg",
+    "mls",
+    "polynomial",
+    "random-walk",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "shared-factor-break": [
+    "cylinder-bell-funnel",
+    "mls",
+    "polynomial"
+  ],
+  "trend": [
+    "cosine",
+    "cylinder-bell-funnel",
+    "dirichlet",
+    "ecg",
+    "mls",
+    "polynomial",
+    "random-walk",
+    "sawtooth",
+    "sine",
+    "square"
+  ],
+  "variance": [
+    "cosine",
+    "dirichlet",
+    "ecg",
+    "mls",
+    "polynomial",
+    "random-walk",
+    "sawtooth",
+    "sine",
+    "square"
+  ]
+}
