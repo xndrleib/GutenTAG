@@ -8,5 +8,6 @@ from ..base_oscillations.polynomial import polynomial
 from ..base_oscillations.random_mode_jump import random_mode_jump
 from ..base_oscillations.random_walk import random_walk
 from ..base_oscillations.sawtooth import sawtooth
+from ..base_oscillations.shared_noise_sine import shared_noise_sine
 from ..base_oscillations.sine import sine
 from ..base_oscillations.square import square

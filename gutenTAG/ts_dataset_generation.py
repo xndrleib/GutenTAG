@@ -43,6 +43,7 @@ DEFAULT_PROFILES_PER_PAIR = 1
 DEFAULT_BASE_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "random-mode-jump": {"frequency": 250, "variance": 0.05, "random-seed": 7},
     "sine": {"frequency": 8.0, "variance": 0.03},
+    "shared-noise-sine": {"frequency": 7.0, "amplitude": 0.55, "variance": 0.18},
     "cosine": {"frequency": 8.0, "variance": 0.03},
     "square": {"frequency": 8.0, "variance": 0.03},
     "sawtooth": {"frequency": 8.0, "variance": 0.03},

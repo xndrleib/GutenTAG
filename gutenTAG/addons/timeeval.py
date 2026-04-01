@@ -172,6 +172,7 @@ class TimeEvalAddOn(BaseAddOn):
             kind = dim.get(PARAMETERS.KIND)
             if frequency is None or kind not in [
                 BASE_OSCILLATION_NAMES.SINE,
+                BASE_OSCILLATION_NAMES.SHARED_NOISE_SINE,
                 BASE_OSCILLATION_NAMES.COSINE,
                 BASE_OSCILLATION_NAMES.ECG,
                 BASE_OSCILLATION_NAMES.RANDOM_MODE_JUMP,
@@ -183,6 +184,7 @@ class TimeEvalAddOn(BaseAddOn):
                 periods.append(np.nan)
             elif kind in [
                 BASE_OSCILLATION_NAMES.SINE,
+                BASE_OSCILLATION_NAMES.SHARED_NOISE_SINE,
                 BASE_OSCILLATION_NAMES.COSINE,
                 BASE_OSCILLATION_NAMES.ECG,
                 BASE_OSCILLATION_NAMES.SQUARE,

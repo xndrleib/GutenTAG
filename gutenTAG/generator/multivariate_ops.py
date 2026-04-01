@@ -75,8 +75,16 @@ def shared_noise_window_from_components(
     )
 
 
-def _deterministic_decorrelated_component(values: np.ndarray) -> np.ndarray:
-    """Build a same-shape surrogate component with weak correlation to `values`."""
+def _deterministic_decorrelated_component(
+    values: np.ndarray, variant: int = 0
+) -> np.ndarray:
+    """Build a same-shape surrogate component with weak correlation to `values`.
+
+    Different ``variant`` values choose different decorrelated surrogates. This is
+    useful for pair-level structural anomalies where every affected channel should
+    lose the shared factor in a slightly different way instead of inheriting the
+    exact same replacement component.
+    """
     series = np.asarray(values, dtype=np.float64)
     n = int(series.shape[0])
     if n <= 1:
@@ -97,16 +105,15 @@ def _deterministic_decorrelated_component(values: np.ndarray) -> np.ndarray:
         if len(candidates) >= 6:
             break
 
-    best = candidates[0]
-    best_corr = float("inf")
+    scored_candidates: list[tuple[float, np.ndarray]] = []
     for candidate in candidates:
         corr = float(np.corrcoef(centered, candidate)[0, 1]) if n > 2 else 0.0
         score = abs(corr) if np.isfinite(corr) else float("inf")
-        if score < best_corr:
-            best = candidate
-            best_corr = score
+        scored_candidates.append((score, candidate))
 
-    surrogate_z, _, _ = _safe_standardize(best)
+    scored_candidates.sort(key=lambda item: item[0])
+    selected = scored_candidates[int(variant) % len(scored_candidates)][1]
+    surrogate_z, _, _ = _safe_standardize(selected)
     shared_scale = float(np.std(centered))
     return (shared_scale * surrogate_z).astype(np.float64)
 
@@ -118,6 +125,7 @@ def mixed_shared_noise_window_from_components(
     noise_mean: float,
     current_shared_weight: float,
     target_alignment: float,
+    surrogate_variant: int = 0,
 ) -> np.ndarray:
     """Recompose noise with preserved shared-energy magnitude but changed alignment.
 
@@ -132,7 +140,9 @@ def mixed_shared_noise_window_from_components(
     residual_weight = float(np.sqrt(max(0.0, 1.0 - magnitude**2)))
     shared_centered = shared - float(np.mean(shared))
     shared_z, _, _ = _safe_standardize(shared_centered)
-    surrogate = _deterministic_decorrelated_component(shared_centered)
+    surrogate = _deterministic_decorrelated_component(
+        shared_centered, variant=surrogate_variant
+    )
     surrogate_z, _, _ = _safe_standardize(surrogate)
     alignment = float(np.clip(target_alignment, -0.999, 0.999))
     orth_weight = float(np.sqrt(max(0.0, 1.0 - alignment**2)))

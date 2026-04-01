@@ -15,6 +15,7 @@ ANOMALIES = "anomalies"
 class BASE_OSCILLATION_NAMES:
     MLS = "mls"
     SINE = "sine"
+    SHARED_NOISE_SINE = "shared-noise-sine"
     COSINE = "cosine"
     RANDOM_WALK = "random-walk"
     CYLINDER_BELL_FUNNEL = "cylinder-bell-funnel"

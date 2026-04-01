@@ -10,24 +10,25 @@ from ..utils.global_variables import BASE_OSCILLATION_NAMES, ANOMALY_TYPE_NAMES
 class Compatibility:
     hard_combinations = pd.DataFrame(
         [
-            [1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1],  # amplitude
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # correlation-flip
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # covariance-change
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # channel-rewiring
-            [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # extremum
-            [1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # frequency
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # lag-synchronization
-            [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # mean
-            [1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0],  # pattern
-            [1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # pattern_shift
-            [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # platform
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # shared-factor-break
-            [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # trend
-            [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # variance
-            [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],  # mode_correlation
+            [1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1],  # amplitude
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # correlation-flip
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # covariance-change
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # channel-rewiring
+            [1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # extremum
+            [1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # frequency
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # lag-synchronization
+            [1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # mean
+            [1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0],  # pattern
+            [1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],  # pattern_shift
+            [1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # platform
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # shared-factor-break
+            [1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # trend
+            [1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],  # variance
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],  # mode_correlation
         ],
         columns=[
             BASE_OSCILLATION_NAMES.SINE,
+            BASE_OSCILLATION_NAMES.SHARED_NOISE_SINE,
             BASE_OSCILLATION_NAMES.COSINE,
             BASE_OSCILLATION_NAMES.SQUARE,
             BASE_OSCILLATION_NAMES.RANDOM_WALK,

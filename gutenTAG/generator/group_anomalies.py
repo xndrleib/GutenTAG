@@ -277,7 +277,16 @@ def _apply_correlation_flip_group(
     if source_end <= source_start or len(group_channels) < 2:
         return []
     anchor_channel = int(group_channels[0])
-    target_channels = [int(ch) for ch in group_channels[1:]]
+    all_have_latent = all(
+        _latent_shared_noise_attrs(channel_bos[int(ch)], source_start, source_end)
+        is not None
+        for ch in group_channels
+    )
+    target_channels = (
+        [int(ch) for ch in group_channels]
+        if all_have_latent
+        else [int(ch) for ch in group_channels[1:]]
+    )
     anchor_window = runtime.compose_window(
         base=base,
         bo=channel_bos[int(anchor_channel)],
@@ -746,7 +755,7 @@ def _apply_shared_factor_break_group(
         end=source_end,
     )
     events: List[Dict[str, Any]] = []
-    for channel in target_channels:
+    for position, channel in enumerate(target_channels):
         segment_idx = int(segment_idx_by_channel[int(channel)])
         params = anomaly_parameters_per_segment[int(segment_idx)]
         shared_factor_scale = float(params.get("shared_factor_scale", 0.0))
@@ -768,6 +777,7 @@ def _apply_shared_factor_break_group(
                 noise_mean=noise_mean,
                 current_shared_weight=current_shared_weight,
                 target_alignment=shared_factor_scale,
+                surrogate_variant=position,
             )
             runtime.replace_noise(
                 bo=channel_bos[int(channel)],
@@ -832,6 +842,7 @@ def _apply_shared_factor_break_group(
                     "anchor_channel": int(anchor_channel),
                     "shared_factor_scale": float(shared_factor_scale),
                     "target_alignment": float(shared_factor_scale),
+                    "surrogate_variant": int(position),
                     "injection_level": injection_level,
                 },
             )

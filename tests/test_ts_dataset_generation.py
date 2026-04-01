@@ -2044,27 +2044,31 @@ class TestTSDatasetGeneration(unittest.TestCase):
             config["dataset"]["instances_per_split"] = 1
             config["anomaly_policy"]["segment_count_range"] = [1, 1]
             config["plot"]["enabled"] = False
-            config["variants"]["base_oscillations"] = ["sine", "cosine", "polynomial"]
+            config["variants"]["base_oscillations"] = ["sine", "cosine", "polynomial", "shared-noise-sine"]
             config["variants"]["anomaly_types"] = [
                 "correlation-flip",
                 "covariance-change",
                 "lag-synchronization",
+                "shared-factor-break",
             ]
             config["variants"]["compatibility_mode"] = "validated"
             config["anomaly_policy"]["special_anomaly_policies"] = {
                 "correlation-flip": {"channel_policy": "paired-random", "min_segment_length": 20},
                 "covariance-change": {"channel_policy": "paired-random", "min_segment_length": 20},
                 "lag-synchronization": {"channel_policy": "paired-random", "min_segment_length": 20},
+                "shared-factor-break": {"channel_policy": "paired-random", "min_segment_length": 20},
             }
             config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
                 "correlation-flip": 20,
                 "covariance-change": 20,
                 "lag-synchronization": 20,
+                "shared-factor-break": 20,
             }
             config["variants"]["anomaly_overrides"] = {
                 "correlation-flip": {"target_correlation": -0.95, "transition_length": 8},
                 "covariance-change": {"coupling_strength": -0.95, "transition_length": 8},
                 "lag-synchronization": {"lag_steps": 6, "transition_length": 8},
+                "shared-factor-break": {"shared_factor_scale": 0.0, "transition_length": 8},
             }
 
             manifest = TSDatasetGenerator.from_dict(config).run()
@@ -2074,10 +2078,12 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertIn("polynomial__covariance-change__p00", generated)
             self.assertIn("sine__lag-synchronization__p00", generated)
             self.assertIn("cosine__lag-synchronization__p00", generated)
-            self.assertIn("cosine__correlation-flip__p00", generated)
-            self.assertIn("polynomial__correlation-flip__p00", generated)
-            self.assertNotIn("cosine__correlation-flip__p00", skipped)
-            self.assertNotIn("polynomial__correlation-flip__p00", skipped)
+            self.assertNotIn("cosine__correlation-flip__p00", generated)
+            self.assertNotIn("polynomial__correlation-flip__p00", generated)
+            self.assertNotIn("shared-noise-sine__shared-factor-break__p00", generated)
+            self.assertIn("cosine__correlation-flip__p00", skipped)
+            self.assertIn("polynomial__correlation-flip__p00", skipped)
+            self.assertIn("shared-noise-sine__shared-factor-break__p00", skipped)
 
     def test_pair_override_base_channel_correlation_reaches_instance_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

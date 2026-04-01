@@ -38,16 +38,10 @@ anomaly_policy:
     covariance-change:
       channel_policy: paired-random
       min_segment_length: 20
-    correlation-flip:
-      channel_policy: paired-random
-      min_segment_length: 20
     channel-rewiring:
       channel_policy: paired-random
       min_segment_length: 8
     lag-synchronization:
-      channel_policy: paired-random
-      min_segment_length: 20
-    shared-factor-break:
       channel_policy: paired-random
       min_segment_length: 20
   min_segment_length_by_anomaly:
@@ -55,10 +49,8 @@ anomaly_policy:
     pattern-shift: 6
     mode-correlation: 8
     covariance-change: 20
-    correlation-flip: 20
     channel-rewiring: 8
     lag-synchronization: 20
-    shared-factor-break: 20
 
 variants:
   base_oscillations:
@@ -74,7 +66,6 @@ variants:
     - pattern-shift
     - mode-correlation
     - covariance-change
-    - correlation-flip
     - lag-synchronization
   compatibility_mode: validated
   skip_base_oscillations: []
@@ -190,17 +181,11 @@ variants:
     covariance-change:
       coupling_strength: -0.95
       transition_length: 8
-    correlation-flip:
-      target_correlation: -0.9
-      transition_length: 8
     channel-rewiring:
       rotation_degrees: 25
       transition_length: 8
     lag-synchronization:
       lag_steps: 6
-      transition_length: 8
-    shared-factor-break:
-      shared_factor_scale: 0.0
       transition_length: 8
   variant_overrides:
     polynomial__covariance-change:
@@ -211,29 +196,6 @@ variants:
           distribution: uniform
           low: 0.09
           high: 0.13
-    polynomial__correlation-flip:
-      base_channel_correlation:
-        shared_noise_weight: 0.95
-      base_oscillation:
-        variance:
-          distribution: uniform
-          low: 0.10
-          high: 0.14
-      anomaly:
-        target_correlation: -1.0
-        transition_length: 14
-    cosine__correlation-flip:
-      base_channel_correlation:
-        shared_noise_weight: 0.96
-      base_oscillation:
-        amplitude:
-          distribution: uniform
-          low: 0.40
-          high: 0.55
-        variance:
-          distribution: uniform
-          low: 0.16
-          high: 0.22
 
 plot:
   enabled: true

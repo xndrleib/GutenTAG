@@ -1,7 +1,7 @@
 {
   "amplitude": ["cosine", "cylinder-bell-funnel", "dirichlet", "ecg", "mls", "random-walk", "sawtooth", "sine", "square"],
   "channel-rewiring": [],
-  "correlation-flip": ["cosine", "polynomial"],
+  "correlation-flip": [],
   "covariance-change": ["polynomial"],
   "extremum": [],
   "frequency": ["cosine", "dirichlet", "ecg", "sawtooth", "sine", "square"],

@@ -11,5 +11,6 @@ from .polynomial import Polynomial
 from .random_mode_jump import RandomModeJump
 from .random_walk import RandomWalk
 from .sawtooth import Sawtooth
+from .shared_noise_sine import SharedNoiseSine
 from .sine import Sine
 from .square import Square
