@@ -80,6 +80,18 @@ class TestDatasetQualityQCV2(unittest.TestCase):
         )
         self.assertEqual(semantic_family, "boundary_anchored_structural")
 
+    def test_qc_v2_semantic_family_classifies_extremum_as_point_univariate(
+        self,
+    ) -> None:
+        module = _load_qc_module()
+        semantic_family = module.classify_semantic_family(
+            anomaly_type="extremum",
+            group_size=1,
+            channel_visible_hint=True,
+            purity_hint="point_event",
+        )
+        self.assertEqual(semantic_family, "point_univariate")
+
     def test_qc_v2_relation_only_policy_uses_affected_channel_shortcut(self) -> None:
         module = _load_qc_module()
         thresholds = module.QCThresholds()
@@ -194,6 +206,41 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             thresholds=thresholds,
         )
         self.assertEqual(bucket, "relation_shift")
+
+    def test_qc_v2_point_univariate_review_and_policy_ignore_boundary_artifact_proxy(
+        self,
+    ) -> None:
+        module = _load_qc_module()
+        thresholds = module.QCThresholds()
+        bucket = module.classify_review_bucket(
+            semantic_family="point_univariate",
+            boundary_jump_ratio=17.0,
+            edge_effect_ratio=0.0,
+            edge_peak_ratio=0.0,
+            visual_artifact_score=11.0,
+            uni_detector_max=1.10,
+            uni_detector_affected_max=1.10,
+            multi_detector_max=float("nan"),
+            detector_preference_margin=float("nan"),
+            thresholds=thresholds,
+        )
+        self.assertEqual(bucket, "channel_visible")
+        passed, reason = module.evaluate_semantic_policy(
+            semantic_family="point_univariate",
+            review_bucket=bucket,
+            zero_effect=False,
+            detectability_pass=True,
+            effect_inside_share_l1=1.0,
+            far_field_out_ratio_l2=0.0,
+            uni_detector_max=1.10,
+            uni_detector_affected_max=1.10,
+            uni_detector_context_max=0.0,
+            multi_detector_max=float("nan"),
+            detector_preference_margin=float("nan"),
+            thresholds=thresholds,
+        )
+        self.assertTrue(passed)
+        self.assertEqual(reason, "pass")
 
     def test_qc_v2_invariant_policy_review_and_difficulty_fixtures(self) -> None:
         module = _load_qc_module()

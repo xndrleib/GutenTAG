@@ -391,6 +391,58 @@ class TestTSDatasetGeneration(unittest.TestCase):
                 len(extremum_events),
             )
 
+    def test_extremum_point_planner_supports_count_based_event_ranges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 600
+            config["dataset"]["channels"] = 2
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.005
+            config["anomaly_policy"]["segment_planner"] = {
+                "default": {"planner": "uniform_segments"},
+                "extremum": {
+                    "planner": "point_events_from_density",
+                    "segment_count_range": [20, 25],
+                    "unique_timestamps": True,
+                },
+            }
+            config["variants"]["anomaly_types"] = ["extremum"]
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__extremum__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__extremum__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            with (instance_dir / "instance_summary.json").open(
+                "r", encoding="utf-8"
+            ) as handle:
+                summary = json.load(handle)
+
+            self.assertGreaterEqual(len(events), 20)
+            self.assertLessEqual(len(events), 25)
+            self.assertTrue(all(int(event["length"]) == 1 for event in events))
+            self.assertAlmostEqual(
+                float(summary["target_density"]),
+                len(events) / int(config["dataset"]["length"]),
+                places=9,
+            )
+            self.assertAlmostEqual(
+                float(summary["achieved_density"]),
+                len(events) / int(config["dataset"]["length"]),
+                places=9,
+            )
+
     def test_trend_random_walk_template_handles_short_segments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "dataset"

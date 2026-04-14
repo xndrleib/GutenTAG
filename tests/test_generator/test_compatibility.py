@@ -78,6 +78,20 @@ class TestCompatibility(TestCase):
     def test_validated_matrix_keeps_only_admitted_structural_pairs(self):
         self.assertTrue(
             Compatibility.check(
+                anomaly="extremum",
+                base_oscillation="cosine",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="extremum",
+                base_oscillation="ecg",
+                mode="recommended",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
                 anomaly="covariance-change",
                 base_oscillation="polynomial",
                 mode="validated",

@@ -50,7 +50,7 @@ anomaly_policy:
       min_effect_delta: 0.14
     extremum:
       planner: point_events_from_density
-      density_range: [0.05, 0.10]
+      segment_count_range: [20, 50]
       unique_timestamps: true
   special_anomaly_policies:
     mode-correlation:

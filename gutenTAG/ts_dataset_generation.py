@@ -1501,9 +1501,6 @@ class TSDatasetGenerator:
         anomalous_base = self._stack_channel_timeseries(anomalous_bos)
 
         plan_rng = np.random.default_rng(int(seeds["plan_seed"]))
-        target_density = float(
-            plan_rng.uniform(self.config.density_range[0], self.config.density_range[1])
-        )
         special_policy = _merge_dicts(
             self._special_policy(variant.anomaly_type),
             dict(variant_anomaly_policy or {}),
@@ -1512,6 +1509,21 @@ class TSDatasetGenerator:
             planner_cfg = copy.deepcopy(dict(variant_segment_planner))
         else:
             planner_cfg = self._resolve_segment_planner(variant.anomaly_type)
+        planner_name = str(planner_cfg.get("planner", "uniform_segments")).lower()
+        active_density_range_raw = special_policy.get(
+            "density_range",
+            planner_cfg.get("density_range"),
+        )
+        if active_density_range_raw is not None:
+            active_density_range = _parse_pair(
+                active_density_range_raw,
+                "density_range",
+            )
+        else:
+            active_density_range = tuple(self.config.density_range)
+        target_density = float(
+            plan_rng.uniform(active_density_range[0], active_density_range[1])
+        )
         base_period_size = anomalous_bos[0].get_period_size()
         if base_period_size is not None:
             base_period_size = int(base_period_size)
@@ -1553,6 +1565,13 @@ class TSDatasetGenerator:
             anomaly_parameter_template=anomaly_parameter_template,
             parameter_seed=int(seeds["params_seed"]),
         )
+        point_count_based_plan = bool(
+            planner_name == "point_events_from_density"
+            and planner_cfg.get("segment_count_range") is not None
+        )
+        if point_count_based_plan:
+            target_density = float(len(segment_plan) / self.config.length)
+            active_density_range = (target_density, target_density)
         anomaly_params_per_segment = self._resolve_anomaly_parameters_for_segments(
             base_kind=variant.base_oscillation,
             anomaly_type=variant.anomaly_type,
@@ -1604,12 +1623,12 @@ class TSDatasetGenerator:
         )
         if active_density_tolerance < 0:
             raise ValueError("density_tolerance must be >= 0")
-        lower_with_tolerance = self.config.density_range[0] - active_density_tolerance
-        upper_with_tolerance = self.config.density_range[1] + active_density_tolerance
+        lower_with_tolerance = active_density_range[0] - active_density_tolerance
+        upper_with_tolerance = active_density_range[1] + active_density_tolerance
         if not (lower_with_tolerance <= density_for_validation <= upper_with_tolerance):
             raise ValueError(
                 f"Achieved density {density_for_validation:.6f} outside target range "
-                f"{self.config.density_range} | mode={density_validation_mode} "
+                f"{active_density_range} | mode={density_validation_mode} "
                 f"| tolerance={active_density_tolerance:.6f}"
                 f"| labeled={achieved_density_labeled:.6f} | source={achieved_density_source:.6f}."
             )
@@ -3274,18 +3293,31 @@ class TSDatasetGenerator:
         overlap_policy: str,
         planner_cfg: Mapping[str, Any],
     ) -> List[SegmentPlan]:
-        density_range_raw = planner_cfg.get("density_range")
-        if density_range_raw is not None:
-            planner_density_range = _parse_pair(density_range_raw, "density_range")
-            density = float(
-                np.clip(
-                    target_density, planner_density_range[0], planner_density_range[1]
-                )
+        segment_count_range_raw = planner_cfg.get("segment_count_range")
+        if segment_count_range_raw is not None:
+            segment_count_range = _parse_pair_int(
+                segment_count_range_raw,
+                "segment_count_range",
+            )
+            if segment_count_range[0] > segment_count_range[1]:
+                segment_count_range = (segment_count_range[1], segment_count_range[0])
+            n_points = int(
+                rng.integers(segment_count_range[0], segment_count_range[1] + 1)
             )
         else:
-            density = float(target_density)
+            density_range_raw = planner_cfg.get("density_range")
+            if density_range_raw is not None:
+                planner_density_range = _parse_pair(density_range_raw, "density_range")
+                density = float(
+                    np.clip(
+                        target_density, planner_density_range[0], planner_density_range[1]
+                    )
+                )
+            else:
+                density = float(target_density)
 
-        n_points = int(np.floor(density * self.config.length))
+            n_points = int(np.floor(density * self.config.length))
+
         n_points = max(1, min(n_points, self.config.length))
         unique_timestamps = bool(planner_cfg.get("unique_timestamps", True))
 

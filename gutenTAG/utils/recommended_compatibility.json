@@ -20,7 +20,7 @@
     "polynomial",
     "shared-noise-sine"
   ],
-  "extremum": [],
+  "extremum": ["cosine", "cylinder-bell-funnel", "dirichlet", "ecg", "mls", "polynomial", "random-walk", "sawtooth", "sine", "square"],
   "frequency": [
     "cosine",
     "dirichlet",

@@ -3,7 +3,7 @@
   "channel-rewiring": [],
   "correlation-flip": ["polynomial", "shared-noise-sine"],
   "covariance-change": ["polynomial", "shared-noise-sine"],
-  "extremum": [],
+  "extremum": ["cosine", "cylinder-bell-funnel", "dirichlet", "ecg", "mls", "polynomial", "random-walk", "sawtooth", "sine", "square"],
   "frequency": ["cosine", "dirichlet", "ecg", "sawtooth", "sine", "square"],
   "lag-synchronization": ["cosine", "sine"],
   "mean": ["cosine", "cylinder-bell-funnel", "dirichlet", "ecg", "mls", "polynomial", "random-walk", "sawtooth", "sine", "square"],
