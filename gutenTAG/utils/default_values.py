@@ -22,6 +22,7 @@ default_values: Dict[str, Dict[str, Any]] = {
         PARAMETERS.CHANNEL_OFFSET: 1.0,
         PARAMETERS.RANDOM_SEED: None,
         PARAMETERS.FORMULA: None,
+        PARAMETERS.PHASE: 0.0,
         PARAMETERS.ECG_SIM_METHOD: "simple",
         PARAMETERS.WIDTH: 1.0,
         PARAMETERS.DUTY: 0.5,

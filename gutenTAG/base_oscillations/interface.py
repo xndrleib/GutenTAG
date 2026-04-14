@@ -63,6 +63,9 @@ class BaseOscillationInterface(ABC):
         self.formula = kwargs.get(
             PARAMETERS.FORMULA, default_values[BASE_OSCILLATIONS][PARAMETERS.FORMULA]
         )
+        self.phase = kwargs.get(
+            PARAMETERS.PHASE, default_values[BASE_OSCILLATIONS][PARAMETERS.PHASE]
+        )
         self.ecg_sim_method = kwargs.get(
             PARAMETERS.ECG_SIM_METHOD,
             default_values[BASE_OSCILLATIONS][PARAMETERS.ECG_SIM_METHOD],

@@ -86,6 +86,20 @@ class TestCompatibility(TestCase):
         self.assertTrue(
             Compatibility.check(
                 anomaly="correlation-flip",
+                base_oscillation="polynomial",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="covariance-change",
+                base_oscillation="shared-noise-sine",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="correlation-flip",
                 base_oscillation="cosine",
                 mode="recommended",
             )
@@ -94,6 +108,13 @@ class TestCompatibility(TestCase):
             Compatibility.check(
                 anomaly="correlation-flip",
                 base_oscillation="cosine",
+                mode="validated",
+            )
+        )
+        self.assertTrue(
+            Compatibility.check(
+                anomaly="correlation-flip",
+                base_oscillation="shared-noise-sine",
                 mode="validated",
             )
         )

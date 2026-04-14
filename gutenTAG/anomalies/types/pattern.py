@@ -35,6 +35,54 @@ class AnomalyPattern(BaseAnomaly):
         self.transition_length = parameters.transition_length
 
     def generate(self, anomaly_protocol: AnomalyProtocol) -> AnomalyProtocol:
+        base_kind = anomaly_protocol.base_oscillation_kind
+
+        def effective_transition_length(length: int) -> Optional[int]:
+            requested = 0 if self.transition_length is None else int(self.transition_length)
+            if base_kind in {Sawtooth.KIND, Square.KIND}:
+                return int(max(1, min(max(2, requested), max(2, length // 10))))
+            if base_kind in {
+                ECG.KIND,
+                CylinderBellFunnel.KIND,
+                MLS.KIND,
+            }:
+                return int(
+                    max(
+                        requested,
+                        min(max(2, int(round(0.18 * float(length)))), max(0, length // 3)),
+                    )
+                )
+            return self.transition_length
+
+        def edge_lock_width(length: int) -> int:
+            if base_kind in {Sawtooth.KIND, Square.KIND}:
+                return int(max(2, min(length // 6, round(0.10 * float(length)))))
+            if base_kind in {
+                ECG.KIND,
+                CylinderBellFunnel.KIND,
+                MLS.KIND,
+            }:
+                return int(max(1, min(length // 8, round(0.06 * float(length)))))
+            return 0
+
+        def finalize_candidate(candidate: np.ndarray, reference: np.ndarray) -> np.ndarray:
+            if base_kind in {Sawtooth.KIND, Square.KIND}:
+                return self._replace_core_keep_edges(
+                    candidate,
+                    reference,
+                    edge_lock_width(reference.shape[0]),
+                )
+            candidate = self.blend_with_reference(
+                candidate,
+                reference,
+                effective_transition_length(reference.shape[0]),
+            )
+            return self._lock_reference_edges(
+                candidate,
+                reference,
+                edge_lock_width(reference.shape[0]),
+            )
+
         def sinusoid_template(length: int, k: float) -> np.ndarray:
             if length <= 0:
                 return np.array([], dtype=np.float64)
@@ -52,9 +100,7 @@ class AnomalyPattern(BaseAnomaly):
                 return candidate
             if candidate.shape[0] != reference.shape[0]:
                 return candidate
-            candidate = self.blend_with_reference(
-                candidate, reference, self.transition_length
-            )
+            candidate = finalize_candidate(candidate, reference)
             delta = candidate - reference
             max_delta = float(np.max(np.abs(delta)))
             min_required = max(self.min_effect_delta, 1e-10)
@@ -65,9 +111,7 @@ class AnomalyPattern(BaseAnomaly):
             scale = max(window_ptp / 2.0, self.min_window_ptp / 2.0, 1e-6)
             center = float(np.mean(reference))
             target = center + scale * template
-            target = self.blend_with_reference(
-                target, reference, self.transition_length
-            )
+            target = finalize_candidate(target, reference)
             target_delta = target - reference
             target_max_delta = float(np.max(np.abs(target_delta)))
             if target_max_delta <= 1e-12:
@@ -77,17 +121,12 @@ class AnomalyPattern(BaseAnomaly):
                     return corrected
                 center_idx = int(corrected.size // 2)
                 corrected[center_idx] = corrected[center_idx] + min_required
-                corrected[0] = reference[0]
-                corrected[-1] = reference[-1]
-                return corrected
+                return finalize_candidate(corrected, reference)
             blend = float(self.blend_strength)
             if self.adaptive_blend and self.min_effect_delta > 0.0:
                 blend = max(blend, self.min_effect_delta / target_max_delta)
             blended = reference + blend * target_delta
-            if blended.size > 0:
-                blended[0] = reference[0]
-                blended[-1] = reference[-1]
-            return blended
+            return finalize_candidate(blended, reference)
 
         if anomaly_protocol.base_oscillation_kind == CylinderBellFunnel.KIND:
             cbf = anomaly_protocol.base_oscillation
@@ -220,6 +259,61 @@ class AnomalyPattern(BaseAnomaly):
                 self.__class__.__name__, anomaly_protocol.base_oscillation_kind
             )
         return anomaly_protocol
+
+    @staticmethod
+    def _lock_reference_edges(
+        candidate: np.ndarray,
+        reference: np.ndarray,
+        edge_width: int,
+    ) -> np.ndarray:
+        if edge_width <= 0:
+            return np.asarray(candidate, dtype=np.float64)
+        ref = np.asarray(reference, dtype=np.float64)
+        cand = np.asarray(candidate, dtype=np.float64).copy()
+        n = min(ref.shape[0], cand.shape[0])
+        if n <= 2:
+            return cand[:n]
+        edge = min(int(edge_width), max(1, n // 4))
+        if edge <= 0:
+            return cand[:n]
+        alpha = 0.5 * (
+            1.0 - np.cos(np.linspace(0.0, np.pi, edge, dtype=np.float64))
+        )
+        cand = cand[:n]
+        ref = ref[:n]
+        cand[:edge] = (alpha * cand[:edge]) + ((1.0 - alpha) * ref[:edge])
+        cand[-edge:] = (
+            alpha[::-1] * cand[-edge:] + (1.0 - alpha[::-1]) * ref[-edge:]
+        )
+        lock = min(edge, max(1, edge // 2))
+        cand[:lock] = ref[:lock]
+        cand[-lock:] = ref[-lock:]
+        cand[0] = ref[0]
+        cand[-1] = ref[-1]
+        return cand.astype(np.float64, copy=False)
+
+    @staticmethod
+    def _replace_core_keep_edges(
+        candidate: np.ndarray,
+        reference: np.ndarray,
+        edge_width: int,
+    ) -> np.ndarray:
+        ref = np.asarray(reference, dtype=np.float64)
+        cand = np.asarray(candidate, dtype=np.float64)
+        n = min(ref.shape[0], cand.shape[0])
+        if n == 0:
+            return np.zeros(0, dtype=np.float64)
+        edge = min(int(max(0, edge_width)), max(0, n // 3))
+        if edge <= 0 or 2 * edge >= n:
+            result = np.array(cand[:n], dtype=np.float64, copy=True)
+            result[0] = ref[0]
+            result[-1] = ref[-1]
+            return result
+        result = np.array(ref[:n], dtype=np.float64, copy=True)
+        result[edge : n - edge] = cand[edge : n - edge]
+        result[0] = ref[0]
+        result[-1] = ref[-1]
+        return result
 
     @property
     def requires_period_start_position(self) -> bool:

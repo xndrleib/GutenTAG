@@ -15,7 +15,10 @@ from .multivariate_ops import (
     lag_shift_window,
     matched_coupling_window,
     mixed_shared_noise_window_from_components,
+    residualized_correlation_flip_window,
+    residualized_matched_coupling_window,
     rotated_pair_windows,
+    scaled_shared_noise_window_from_components,
     shared_noise_window_from_components,
 )
 from .segment_groups import collect_group_channels, group_source_bounds
@@ -46,6 +49,37 @@ def _latent_shared_noise_attrs(
     shared_weight = float(getattr(bo, "_shared_noise_weight"))
     residual_weight = float(getattr(bo, "_residual_noise_weight", np.sqrt(max(0.0, 1.0 - shared_weight**2))))
     return idio, shared, mean, shared_weight, residual_weight
+
+
+def _effective_latent_transition_length(bo: Any, transition_length: int) -> int:
+    kind = str(bo.get_base_oscillation_kind())
+    if kind == "shared-noise-sine":
+        return int(max(1, min(int(transition_length), 6)))
+    return int(max(0, transition_length))
+
+
+def _effective_relation_target(
+    *,
+    bo: Any,
+    target_correlation: float | None,
+) -> float | None:
+    if target_correlation is None:
+        return None
+    kind = str(bo.get_base_oscillation_kind())
+    if kind == "shared-noise-sine":
+        return float(np.sign(target_correlation) * max(abs(float(target_correlation)), 0.92))
+    return float(target_correlation)
+
+
+def _effective_coupling_strength(
+    *,
+    bo: Any,
+    coupling_strength: float,
+) -> float:
+    kind = str(bo.get_base_oscillation_kind())
+    if kind == "shared-noise-sine":
+        return float(np.sign(coupling_strength) * max(abs(float(coupling_strength)), 0.95))
+    return float(coupling_strength)
 
 
 def apply_group_anomaly(
@@ -282,11 +316,7 @@ def _apply_correlation_flip_group(
         is not None
         for ch in group_channels
     )
-    target_channels = (
-        [int(ch) for ch in group_channels]
-        if all_have_latent
-        else [int(ch) for ch in group_channels[1:]]
-    )
+    target_channels = [int(ch) for ch in group_channels[1:]]
     anchor_window = runtime.compose_window(
         base=base,
         bo=channel_bos[int(anchor_channel)],
@@ -295,7 +325,7 @@ def _apply_correlation_flip_group(
         end=source_end,
     )
     events: List[Dict[str, Any]] = []
-    for channel in target_channels:
+    for position, channel in enumerate(target_channels):
         segment_idx = int(segment_idx_by_channel[int(channel)])
         params = anomaly_parameters_per_segment[int(segment_idx)]
         target_correlation_raw = params.get("target_correlation", -0.85)
@@ -310,8 +340,17 @@ def _apply_correlation_flip_group(
             start=source_start,
             end=source_end,
         )
+        before_noise = runtime.compose_noise(
+            bo=channel_bos[int(channel)],
+            start=source_start,
+            end=source_end,
+        )
         latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
         injection_level = "observed_window"
+        effective_target_correlation = _effective_relation_target(
+            bo=channel_bos[int(channel)],
+            target_correlation=target_correlation,
+        )
         if latent is not None and target_correlation is not None:
             idio, shared, noise_mean, current_shared_weight, _ = latent
             candidate_noise = mixed_shared_noise_window_from_components(
@@ -319,7 +358,15 @@ def _apply_correlation_flip_group(
                 shared_component=shared,
                 noise_mean=noise_mean,
                 current_shared_weight=current_shared_weight,
-                target_alignment=float(target_correlation),
+                target_alignment=float(effective_target_correlation),
+                surrogate_variant=position,
+            )
+            candidate_noise = BaseAnomaly.blend_with_reference(
+                candidate_noise,
+                before_noise,
+                _effective_latent_transition_length(
+                    channel_bos[int(channel)], transition_length
+                ),
             )
             runtime.replace_noise(
                 bo=channel_bos[int(channel)],
@@ -329,11 +376,21 @@ def _apply_correlation_flip_group(
             )
             injection_level = "noise"
         else:
-            candidate = correlation_flip_window(
-                reference=before_window,
-                anchor=anchor_window,
-                target_correlation=target_correlation,
-            )
+            if str(channel_bos[int(channel)].get_base_oscillation_kind()) in {
+                "polynomial",
+                "random-walk",
+            }:
+                candidate = residualized_correlation_flip_window(
+                    reference=before_window,
+                    anchor=anchor_window,
+                    target_correlation=effective_target_correlation,
+                )
+            else:
+                candidate = correlation_flip_window(
+                    reference=before_window,
+                    anchor=anchor_window,
+                    target_correlation=effective_target_correlation,
+                )
             candidate = BaseAnomaly.blend_with_reference(
                 candidate, before_window, transition_length
             )
@@ -384,6 +441,7 @@ def _apply_correlation_flip_group(
                     "anchor_channel": int(anchor_channel),
                     "target_correlation": target_correlation,
                     "target_alignment": target_correlation,
+                    "effective_target_alignment": effective_target_correlation,
                     "injection_level": injection_level,
                 },
             )
@@ -437,15 +495,32 @@ def _apply_covariance_change_group(
             start=source_start,
             end=source_end,
         )
+        before_noise = runtime.compose_noise(
+            bo=channel_bos[int(channel)],
+            start=source_start,
+            end=source_end,
+        )
         latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
         injection_level = "observed_window"
+        effective_coupling_strength = _effective_coupling_strength(
+            bo=channel_bos[int(channel)],
+            coupling_strength=coupling_strength,
+        )
         if latent is not None:
             idio, shared, noise_mean, _, _ = latent
             candidate_noise = shared_noise_window_from_components(
                 idiosyncratic_component=idio,
                 shared_component=shared,
                 noise_mean=noise_mean,
-                target_shared_weight=float(coupling_strength),
+                target_shared_weight=float(effective_coupling_strength),
+            )
+            candidate_noise = BaseAnomaly.blend_with_reference(
+                candidate_noise,
+                before_noise,
+                _effective_latent_transition_length(
+                    channel_bos[int(channel)],
+                    max(0, min(transition_length, 8)),
+                ),
             )
             runtime.replace_noise(
                 bo=channel_bos[int(channel)],
@@ -455,11 +530,21 @@ def _apply_covariance_change_group(
             )
             injection_level = "noise"
         else:
-            candidate = matched_coupling_window(
-                reference=before_window,
-                anchor=anchor_window,
-                coupling_strength=coupling_strength,
-            )
+            if str(channel_bos[int(channel)].get_base_oscillation_kind()) in {
+                "polynomial",
+                "random-walk",
+            }:
+                candidate = residualized_matched_coupling_window(
+                    reference=before_window,
+                    anchor=anchor_window,
+                    coupling_strength=effective_coupling_strength,
+                )
+            else:
+                candidate = matched_coupling_window(
+                    reference=before_window,
+                    anchor=anchor_window,
+                    coupling_strength=effective_coupling_strength,
+                )
             candidate = BaseAnomaly.blend_with_reference(
                 candidate, before_window, transition_length
             )
@@ -509,6 +594,7 @@ def _apply_covariance_change_group(
                 extra={
                     "anchor_channel": int(anchor_channel),
                     "coupling_strength": float(coupling_strength),
+                    "effective_coupling_strength": float(effective_coupling_strength),
                     "injection_level": injection_level,
                 },
             )
@@ -559,31 +645,74 @@ def _apply_channel_rewiring_group(
         start=source_start,
         end=source_end,
     )
-    rewired_first, rewired_second = rotated_pair_windows(
-        before_first, before_second, rotation_degrees=rotation_degrees
+    latent_first = _latent_shared_noise_attrs(
+        channel_bos[int(first_channel)], source_start, source_end
     )
-    candidate_by_channel = {
-        int(first_channel): BaseAnomaly.blend_with_reference(
-            rewired_first, before_first, transition_length
-        ),
-        int(second_channel): BaseAnomaly.blend_with_reference(
-            rewired_second, before_second, transition_length
-        ),
-    }
+    latent_second = _latent_shared_noise_attrs(
+        channel_bos[int(second_channel)], source_start, source_end
+    )
+    injection_level = "observed_window"
+    candidate_by_channel: dict[int, np.ndarray] = {}
+    if latent_first is not None and latent_second is not None:
+        before_noise_first = runtime.compose_noise(
+            bo=channel_bos[int(first_channel)],
+            start=source_start,
+            end=source_end,
+        )
+        before_noise_second = runtime.compose_noise(
+            bo=channel_bos[int(second_channel)],
+            start=source_start,
+            end=source_end,
+        )
+        rewired_noise_first, rewired_noise_second = rotated_pair_windows(
+            before_noise_first,
+            before_noise_second,
+            rotation_degrees=rotation_degrees,
+        )
+        runtime.replace_noise(
+            bo=channel_bos[int(first_channel)],
+            start=source_start,
+            end=source_end,
+            target_noise=BaseAnomaly.blend_with_reference(
+                rewired_noise_first, before_noise_first, transition_length
+            ),
+        )
+        runtime.replace_noise(
+            bo=channel_bos[int(second_channel)],
+            start=source_start,
+            end=source_end,
+            target_noise=BaseAnomaly.blend_with_reference(
+                rewired_noise_second, before_noise_second, transition_length
+            ),
+        )
+        injection_level = "noise"
+    else:
+        rewired_first, rewired_second = rotated_pair_windows(
+            before_first, before_second, rotation_degrees=rotation_degrees
+        )
+        candidate_by_channel = {
+            int(first_channel): BaseAnomaly.blend_with_reference(
+                rewired_first, before_first, transition_length
+            ),
+            int(second_channel): BaseAnomaly.blend_with_reference(
+                rewired_second, before_second, transition_length
+            ),
+        }
     events: List[Dict[str, Any]] = []
     for channel, before_window in [
         (first_channel, before_first),
         (second_channel, before_second),
     ]:
         segment_idx = int(segment_idx_by_channel[int(channel)])
-        runtime.replace_window(
-            base=base,
-            bo=channel_bos[int(channel)],
-            channel=int(channel),
-            start=source_start,
-            end=source_end,
-            target_observed=candidate_by_channel[int(channel)],
-        )
+        if injection_level == "observed_window":
+            runtime.replace_window(
+                base=base,
+                bo=channel_bos[int(channel)],
+                channel=int(channel),
+                start=source_start,
+                end=source_end,
+                target_observed=candidate_by_channel[int(channel)],
+            )
         after_window = runtime.compose_window(
             base=base,
             bo=channel_bos[int(channel)],
@@ -610,14 +739,19 @@ def _apply_channel_rewiring_group(
                 group_channels=[int(ch) for ch in group_channels],
                 affected_channels=[int(first_channel), int(second_channel)],
                 anomaly_object="paired_structure_rotation",
-                channel_visible=True,
-                purity_hint="not_pure_local",
+                channel_visible=(injection_level != "noise"),
+                purity_hint=(
+                    "operational_candidate"
+                    if injection_level == "noise"
+                    else "not_pure_local"
+                ),
                 params=runtime.to_builtin(anomaly_parameters_per_segment[int(segment_idx)]),
                 source_start=int(source_start),
                 source_end=int(source_end),
                 extra={
                     "rewired_pair": [int(first_channel), int(second_channel)],
                     "rotation_degrees": float(rotation_degrees),
+                    "injection_level": injection_level,
                 },
             )
         )
@@ -771,13 +905,20 @@ def _apply_shared_factor_break_group(
         injection_level = "observed_window"
         if latent is not None:
             idio, shared, noise_mean, current_shared_weight, _ = latent
-            candidate_noise = mixed_shared_noise_window_from_components(
+            before_noise = runtime.compose_noise(
+                bo=channel_bos[int(channel)],
+                start=source_start,
+                end=source_end,
+            )
+            candidate_noise = scaled_shared_noise_window_from_components(
                 idiosyncratic_component=idio,
                 shared_component=shared,
                 noise_mean=noise_mean,
                 current_shared_weight=current_shared_weight,
-                target_alignment=shared_factor_scale,
-                surrogate_variant=position,
+                shared_factor_scale=shared_factor_scale,
+            )
+            candidate_noise = BaseAnomaly.blend_with_reference(
+                candidate_noise, before_noise, transition_length
             )
             runtime.replace_noise(
                 bo=channel_bos[int(channel)],

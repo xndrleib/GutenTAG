@@ -65,6 +65,7 @@ class PARAMETERS:
     CHANNEL_OFFSET = "channel-offset"
     RANDOM_SEED = "random-seed"
     FORMULA = "formula"
+    PHASE = "phase"
     KIND = "kind"
     KINDS = "kinds"
     NAME = "name"

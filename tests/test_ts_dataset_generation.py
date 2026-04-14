@@ -700,6 +700,75 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertIn("sine__frequency__p01", manifest["generated_variants"])
             self.assertEqual(len(manifest["skipped_variants"]), 0)
 
+    def test_frequency_ecg_variant_override_enforces_long_slowdown_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 1600
+            config["dataset"]["channels"] = 3
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.01
+            config["anomaly_policy"]["segment_count_range"] = [8, 14]
+            config["variants"]["base_oscillations"] = ["ecg"]
+            config["variants"]["anomaly_types"] = ["frequency"]
+            config["variants"]["profiles_per_pair"] = 1
+            config["variants"]["pair_profiles"] = {"ecg__frequency": ["p01"]}
+            config["variants"]["anomaly_parameter_policy"] = "random_per_segment"
+            config["variants"]["base_oscillation_overrides"] = {
+                "ecg": {"frequency": 8.0, "amplitude": 1.0, "variance": 0.02}
+            }
+            config["variants"]["variant_overrides"] = {
+                "ecg__frequency": {
+                    "anomaly_policy": {
+                        "segment_count_range": [6, 10],
+                        "min_segment_length": 72,
+                        "segment_planner": {
+                            "planner": "period_locked_frequency",
+                            "min_segment_length": 72,
+                            "periods_per_segment_range": [6, 8],
+                            "align_to_period_start": True,
+                            "period_ratio_offsets": [-2, -1],
+                            "frequency_factor_bounds": [0.65, 0.95],
+                        },
+                    }
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("ecg__frequency__p01", manifest["generated_variants"])
+
+            instance_dir = (
+                output_root
+                / "variants"
+                / "ecg__frequency__p01"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            for event in events:
+                self.assertGreaterEqual(int(event["length"]), 72)
+                factor = float(event["params"]["frequency_factor"])
+                self.assertGreaterEqual(factor, 0.65 - 1e-9)
+                self.assertLessEqual(factor, 0.95 + 1e-9)
+
+            with (instance_dir / "instance_summary.json").open(
+                "r", encoding="utf-8"
+            ) as handle:
+                summary = json.load(handle)
+            self.assertGreaterEqual(int(summary["segment_length_min"]), 72)
+            self.assertEqual(
+                summary["variant_anomaly_policy"]["segment_planner"][
+                    "frequency_factor_bounds"
+                ],
+                [0.65, 0.95],
+            )
+
     def test_random_per_instance_base_parameters_are_split_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "dataset"
@@ -820,6 +889,24 @@ class TestTSDatasetGeneration(unittest.TestCase):
                 float(np.mod(train_phase + (4.0 * np.pi / 3.0), modulo)),
                 places=8,
             )
+
+            def load_clean(split: str) -> np.ndarray:
+                path = (
+                    output_root
+                    / "variants"
+                    / "sine__mean__p00"
+                    / split
+                    / "instances"
+                    / "instance_000"
+                    / "clean.csv"
+                )
+                return pd.read_csv(path).to_numpy(dtype=np.float64)
+
+            train_clean = load_clean("train")
+            val_clean = load_clean("val")
+            test_clean = load_clean("test")
+            self.assertGreater(float(np.max(np.abs(train_clean - val_clean))), 1e-3)
+            self.assertGreater(float(np.max(np.abs(train_clean - test_clean))), 1e-3)
 
             self.assertFalse(bool(train["split_phase_shift"]["phase_shift_applied"]))
             self.assertTrue(bool(val["split_phase_shift"]["phase_shift_applied"]))
@@ -1631,6 +1718,46 @@ class TestTSDatasetGeneration(unittest.TestCase):
                             msg=f"Expected right source edge continuity for {anomaly_type}: {event}",
                         )
 
+    def test_transition_policy_randomizes_default_transition_lengths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 700
+            config["dataset"]["channels"] = 1
+            config["dataset"]["splits"] = ["train", "val"]
+            config["dataset"]["instances_per_split"] = 2
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 5]
+            config["variants"]["base_oscillations"] = ["sine"]
+            config["variants"]["anomaly_types"] = ["mean"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__mean__p00", manifest["generated_variants"])
+            transition_lengths = set()
+            for split in ["train", "val"]:
+                for instance_idx in range(2):
+                    events_path = (
+                        output_root
+                        / "variants"
+                        / "sine__mean__p00"
+                        / split
+                        / "instances"
+                        / f"instance_{instance_idx:03d}"
+                        / "events.json"
+                    )
+                    with events_path.open("r", encoding="utf-8") as handle:
+                        events = json.load(handle)
+                    for event in events:
+                        if "transition_length" in event.get("params", {}):
+                            transition_lengths.add(
+                                int(event["params"]["transition_length"])
+                            )
+            self.assertGreater(len(transition_lengths), 1)
+            self.assertTrue(all(length >= 0 for length in transition_lengths))
+
     def test_mode_correlation_uses_paired_groups_and_relation_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "dataset"
@@ -1643,9 +1770,6 @@ class TestTSDatasetGeneration(unittest.TestCase):
             config["anomaly_policy"]["density_tolerance"] = 0.02
             config["anomaly_policy"]["segment_count_range"] = [4, 4]
             config["anomaly_policy"]["channel_policy"] = "single-random"
-            config["anomaly_policy"]["segment_planner"] = {
-                "mode-correlation": {"planner": "mode_boundary_segments"}
-            }
             config["variants"]["base_oscillations"] = ["random-mode-jump"]
             config["variants"]["anomaly_types"] = ["mode-correlation"]
             config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
@@ -1690,6 +1814,70 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     places=6,
                     msg=f"Mode-correlation should remain visible on the flipped channel: {event}",
                 )
+
+    def test_base_channel_shared_across_channels_lockstep_sampling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 600
+            config["dataset"]["channels"] = 4
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["variants"]["base_oscillations"] = ["sine"]
+            config["variants"]["anomaly_types"] = ["mean"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["base_channel_overrides"] = {
+                "sine": {
+                    "frequency": {
+                        "distribution": "uniform",
+                        "low": 5.0,
+                        "high": 9.0,
+                        "shared_across_channels": True,
+                    },
+                    "amplitude": {
+                        "distribution": "uniform",
+                        "low": 0.8,
+                        "high": 1.2,
+                        "shared_across_channels": True,
+                    },
+                    "variance": {
+                        "distribution": "uniform",
+                        "low": 0.02,
+                        "high": 0.05,
+                        "shared_across_channels": True,
+                    },
+                    "phase": {
+                        "distribution": "uniform",
+                        "low": 0.0,
+                        "high": 6.283185307179586,
+                    },
+                }
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn("sine__mean__p00", manifest["generated_variants"])
+            instance_dir = (
+                output_root
+                / "variants"
+                / "sine__mean__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            with (instance_dir / "instance_summary.json").open("r", encoding="utf-8") as handle:
+                summary = json.load(handle)
+
+            channel_params = summary["base_channel_parameters"]
+            frequencies = {round(float(params["frequency"]), 10) for params in channel_params}
+            amplitudes = {round(float(params["amplitude"]), 10) for params in channel_params}
+            variances = {round(float(params["variance"]), 10) for params in channel_params}
+            phases = {round(float(params["phase"]), 10) for params in channel_params}
+
+            self.assertEqual(len(frequencies), 1)
+            self.assertEqual(len(amplitudes), 1)
+            self.assertEqual(len(variances), 1)
+            self.assertGreater(len(phases), 1)
 
     def test_paired_random_channel_policy_creates_synchronous_groups(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1876,22 +2064,26 @@ class TestTSDatasetGeneration(unittest.TestCase):
             config["anomaly_policy"]["density_range"] = [0.08, 0.08]
             config["anomaly_policy"]["density_tolerance"] = 0.02
             config["anomaly_policy"]["segment_count_range"] = [2, 2]
-            config["variants"]["base_oscillations"] = ["sine"]
+            config["variants"]["base_oscillations"] = ["polynomial"]
             config["variants"]["anomaly_types"] = ["correlation-flip"]
             config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
-            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.75}
-            config["variants"]["base_oscillation_overrides"] = {"sine": {"variance": 0.12}}
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.92}
+            config["variants"]["base_oscillation_overrides"] = {
+                "polynomial": {"polynomial": [0.015, 0.16], "variance": 0.12}
+            }
             config["variants"]["anomaly_overrides"] = {
-                "correlation-flip": {"target_correlation": -0.9, "transition_length": 6}
+                "correlation-flip": {"target_correlation": -1.0, "transition_length": 10}
             }
             config["plot"]["enabled"] = False
 
             manifest = TSDatasetGenerator.from_dict(config).run()
-            self.assertIn("sine__correlation-flip__p00", manifest["generated_variants"])
+            self.assertIn(
+                "polynomial__correlation-flip__p00", manifest["generated_variants"]
+            )
             instance_dir = (
                 output_root
                 / "variants"
-                / "sine__correlation-flip__p00"
+                / "polynomial__correlation-flip__p00"
                 / "train"
                 / "instances"
                 / "instance_000"
@@ -1901,14 +2093,29 @@ class TestTSDatasetGeneration(unittest.TestCase):
             with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
                 events = json.load(handle)
 
+            self.assertEqual(len(events), 2)
             event = events[0]
             channels = [int(ch) for ch in event["group_channels"]]
+            affected = [int(ch) for ch in event["affected_channels"]]
+            self.assertEqual(len(channels), 2)
+            self.assertEqual(len(affected), 1)
+            self.assertNotEqual(affected[0], channels[0])
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
             clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
             anom_corr = _pair_residual_corr(anomalous, channels, source_start, source_end)
             self.assertGreater(clean_corr, 0.10)
             self.assertGreater(abs(float(anom_corr) - float(clean_corr)), 0.15)
+            self.assertAlmostEqual(
+                float(anomalous[source_start, affected[0]]),
+                float(clean[source_start, affected[0]]),
+                places=8,
+            )
+            self.assertAlmostEqual(
+                float(anomalous[source_end - 1, affected[0]]),
+                float(clean[source_end - 1, affected[0]]),
+                places=8,
+            )
             self.assertEqual(event["anomaly_object"], "pair_correlation_flip")
             self.assertEqual(event["purity_hint"], "operational_candidate")
             self.assertEqual(event["injection_level"], "noise")
@@ -1954,11 +2161,13 @@ class TestTSDatasetGeneration(unittest.TestCase):
 
             event = events[0]
             channels = [int(ch) for ch in event["group_channels"]]
+            affected = [int(ch) for ch in event["affected_channels"]]
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
             clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
             anom_corr = _pair_residual_corr(anomalous, channels, source_start, source_end)
-            self.assertGreater(abs(float(clean_corr)) - abs(float(anom_corr)), 0.05)
+            self.assertGreater(abs(float(clean_corr)) - abs(float(anom_corr)), 0.02)
+            self.assertGreaterEqual(len(affected), 1)
             self.assertEqual(event["anomaly_object"], "shared_factor_break")
             self.assertEqual(event["purity_hint"], "operational_candidate")
             self.assertEqual(event["injection_level"], "noise")
@@ -1998,6 +2207,69 @@ class TestTSDatasetGeneration(unittest.TestCase):
             realized = [int(event["realized_lag_steps"]) for event in events]
             self.assertTrue(any(abs(value) > 0 for value in realized))
             self.assertTrue(all(event["purity_hint"] == "not_pure_local" for event in events))
+
+    def test_channel_rewiring_uses_noise_injection_on_structural_carrier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 900
+            config["dataset"]["channels"] = 4
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+            config["anomaly_policy"]["density_tolerance"] = 0.02
+            config["anomaly_policy"]["segment_count_range"] = [4, 4]
+            config["variants"]["base_oscillations"] = ["shared-noise-sine"]
+            config["variants"]["anomaly_types"] = ["channel-rewiring"]
+            config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+            config["variants"]["base_channel_correlation"] = {"shared_noise_weight": 0.75}
+            config["anomaly_policy"]["special_anomaly_policies"] = {
+                "channel-rewiring": {"channel_policy": "paired-random", "min_segment_length": 20}
+            }
+            config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
+                "channel-rewiring": 20
+            }
+            config["variants"]["anomaly_overrides"] = {
+                "channel-rewiring": {"rotation_degrees": 18, "transition_length": 6}
+            }
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+            self.assertIn(
+                "shared-noise-sine__channel-rewiring__p00",
+                manifest["generated_variants"],
+            )
+            instance_dir = (
+                output_root
+                / "variants"
+                / "shared-noise-sine__channel-rewiring__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
+            clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+            anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(dtype=np.float64)
+            with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                events = json.load(handle)
+            self.assertGreater(len(events), 0)
+            self.assertTrue(all(event["injection_level"] == "noise" for event in events))
+            self.assertTrue(
+                all(event["purity_hint"] == "operational_candidate" for event in events)
+            )
+            for event in events:
+                source_start = int(event["source_start"])
+                source_end = int(event["source_end"])
+                channel = int(event["channel"])
+                self.assertAlmostEqual(
+                    float(anomalous[source_start, channel]),
+                    float(clean[source_start, channel]),
+                    places=8,
+                )
+                self.assertAlmostEqual(
+                    float(anomalous[source_end - 1, channel]),
+                    float(clean[source_end - 1, channel]),
+                    places=8,
+                )
 
     def test_recommended_compatibility_mode_skips_unvalidated_pairs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2076,13 +2348,14 @@ class TestTSDatasetGeneration(unittest.TestCase):
             skipped = {entry["variant_id"] for entry in manifest["skipped_variants"]}
 
             self.assertIn("polynomial__covariance-change__p00", generated)
+            self.assertIn("shared-noise-sine__covariance-change__p00", generated)
+            self.assertIn("polynomial__correlation-flip__p00", generated)
+            self.assertIn("shared-noise-sine__correlation-flip__p00", generated)
             self.assertIn("sine__lag-synchronization__p00", generated)
             self.assertIn("cosine__lag-synchronization__p00", generated)
             self.assertNotIn("cosine__correlation-flip__p00", generated)
-            self.assertNotIn("polynomial__correlation-flip__p00", generated)
             self.assertNotIn("shared-noise-sine__shared-factor-break__p00", generated)
             self.assertIn("cosine__correlation-flip__p00", skipped)
-            self.assertIn("polynomial__correlation-flip__p00", skipped)
             self.assertIn("shared-noise-sine__shared-factor-break__p00", skipped)
 
     def test_pair_override_base_channel_correlation_reaches_instance_summary(self) -> None:

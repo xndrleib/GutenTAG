@@ -1,8 +1,8 @@
 {
   "amplitude": ["cosine", "cylinder-bell-funnel", "dirichlet", "ecg", "mls", "random-walk", "sawtooth", "sine", "square"],
   "channel-rewiring": [],
-  "correlation-flip": [],
-  "covariance-change": ["polynomial"],
+  "correlation-flip": ["polynomial", "shared-noise-sine"],
+  "covariance-change": ["polynomial", "shared-noise-sine"],
   "extremum": [],
   "frequency": ["cosine", "dirichlet", "ecg", "sawtooth", "sine", "square"],
   "lag-synchronization": ["cosine", "sine"],

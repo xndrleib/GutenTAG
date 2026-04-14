@@ -155,6 +155,33 @@ def mixed_shared_noise_window_from_components(
     ).astype(np.float64)
 
 
+def scaled_shared_noise_window_from_components(
+    *,
+    idiosyncratic_component: np.ndarray,
+    shared_component: np.ndarray,
+    noise_mean: float,
+    current_shared_weight: float,
+    shared_factor_scale: float,
+) -> np.ndarray:
+    """Recompose noise with a scaled version of the original shared factor.
+
+    ``shared_factor_scale=1`` keeps the current shared-factor magnitude,
+    ``0`` removes it completely, and negative values flip its sign while
+    attenuating or preserving its magnitude.
+    """
+    idio = np.asarray(idiosyncratic_component, dtype=np.float64)
+    shared = np.asarray(shared_component, dtype=np.float64)
+    if idio.shape != shared.shape:
+        raise ValueError("Noise components must have the same shape.")
+    base_weight = float(np.clip(current_shared_weight, -0.999, 0.999))
+    scale = float(np.clip(shared_factor_scale, -1.0, 1.0))
+    target_shared_weight = float(np.clip(base_weight * scale, -0.999, 0.999))
+    residual_weight = float(np.sqrt(max(0.0, 1.0 - target_shared_weight**2)))
+    return (
+        float(noise_mean) + residual_weight * idio + target_shared_weight * shared
+    ).astype(np.float64)
+
+
 def _safe_standardize(values: np.ndarray) -> tuple[np.ndarray, float, float]:
     series = np.asarray(values, dtype=np.float64)
     mean = float(np.mean(series))
@@ -177,6 +204,69 @@ def matched_coupling_window(
     mixed = np.sqrt(max(0.0, 1.0 - strength**2)) * z_ref + strength * z_anchor
     mixed_z, _, _ = _safe_standardize(mixed)
     return (mean_ref + std_ref * mixed_z).astype(np.float64)
+
+
+def _local_linear_trend(values: np.ndarray) -> np.ndarray:
+    series = np.asarray(values, dtype=np.float64)
+    n = int(series.shape[0])
+    if n <= 2:
+        return np.full_like(series, float(np.mean(series)))
+    x = np.linspace(-1.0, 1.0, n, dtype=np.float64)
+    degree = 2 if n >= 5 else 1
+    coeff = np.polyfit(x, series, deg=degree)
+    return np.polyval(coeff, x).astype(np.float64)
+
+
+def residualized_matched_coupling_window(
+    reference: np.ndarray,
+    anchor: np.ndarray,
+    coupling_strength: float,
+) -> np.ndarray:
+    """Change relation structure on residuals while keeping the local trend."""
+    ref = np.asarray(reference, dtype=np.float64)
+    anc = np.asarray(anchor, dtype=np.float64)
+    if ref.size == 0 or anc.size == 0:
+        return np.array(ref, dtype=np.float64, copy=True)
+    ref_trend = _local_linear_trend(ref)
+    anc_trend = _local_linear_trend(anc)
+    ref_residual = ref - ref_trend
+    anc_residual = anc - anc_trend
+    if float(np.std(ref_residual)) <= 1e-8 or float(np.std(anc_residual)) <= 1e-8:
+        return matched_coupling_window(ref, anc, coupling_strength)
+    candidate_residual = matched_coupling_window(
+        ref_residual,
+        anc_residual,
+        coupling_strength,
+    )
+    return (ref_trend + candidate_residual).astype(np.float64)
+
+
+def residualized_correlation_flip_window(
+    reference: np.ndarray,
+    anchor: np.ndarray,
+    target_correlation: float | None = -0.85,
+) -> np.ndarray:
+    """Flip relation structure on residuals while keeping the local trend."""
+    ref = np.asarray(reference, dtype=np.float64)
+    anc = np.asarray(anchor, dtype=np.float64)
+    if ref.size == 0 or anc.size == 0:
+        return np.array(ref, dtype=np.float64, copy=True)
+    ref_trend = _local_linear_trend(ref)
+    anc_trend = _local_linear_trend(anc)
+    ref_residual = ref - ref_trend
+    anc_residual = anc - anc_trend
+    if float(np.std(ref_residual)) <= 1e-8 or float(np.std(anc_residual)) <= 1e-8:
+        from .correlation_geometry import correlation_flip_window
+
+        return correlation_flip_window(ref, anc, target_correlation)
+    from .correlation_geometry import correlation_flip_window
+
+    candidate_residual = correlation_flip_window(
+        ref_residual,
+        anc_residual,
+        target_correlation,
+    )
+    return (ref_trend + candidate_residual).astype(np.float64)
 
 
 def matched_rewiring_windows(

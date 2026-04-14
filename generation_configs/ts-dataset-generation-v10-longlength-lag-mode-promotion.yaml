@@ -1,0 +1,172 @@
+generator:
+  output_root: data/ts_dataset_v10_longlength_lag_mode_promotion
+  master_seed: 20260414
+  overwrite_output: true
+  log_level: INFO
+  on_variant_failure: skip
+
+dataset:
+  length: 10000
+  channels: 5
+  splits: [val]
+  instances_per_split: 4
+
+anomaly_policy:
+  density_range: [0.02, 0.04]
+  density_tolerance: 0.04
+  segment_count_range: [4, 8]
+  placement_policy: uniform
+  channel_policy: single-random
+  overlap_policy: global
+  length_normalization: resample
+  support_label_mode: effective_support
+  support_eps_mode: relative
+  support_eps_value: 0.05
+  min_effective_label_length_non_extremum: 2
+  max_placement_attempts: 2500
+  skip_density_incompatible_variants: true
+  segment_planner:
+    default:
+      planner: uniform_segments
+    mode-correlation:
+      planner: mode_boundary_segments
+  special_anomaly_policies:
+    mode-correlation:
+      channel_policy: paired-random
+      density_tolerance: 0.08
+      min_segment_length: 8
+      segment_count_range: [4, 8]
+    lag-synchronization:
+      channel_policy: paired-random
+      density_tolerance: 0.04
+      min_segment_length: 20
+      segment_count_range: [4, 8]
+  min_segment_length_by_anomaly:
+    mode-correlation: 8
+    lag-synchronization: 20
+
+variants:
+  base_oscillations:
+    - sine
+    - cosine
+    - random-mode-jump
+  anomaly_types:
+    - lag-synchronization
+    - mode-correlation
+  compatibility_mode: validated
+  profiles_per_pair: 1
+  pair_profiles: {}
+  base_parameter_policy: random_per_instance
+  base_channel_parameter_policy: random_per_instance
+  anomaly_parameter_policy: fixed_per_variant
+  split_phase_shift:
+    enabled: true
+    mode: fixed_map
+    phase_modulo: 6.283185307179586
+    values:
+      val: 2.0943951023931953
+  base_channel_correlation:
+    shared_noise_weight: 0.92
+  base_channel_overrides:
+    sine:
+      frequency:
+        distribution: uniform
+        low: 70.0
+        high: 90.0
+        shared_across_channels: true
+      amplitude:
+        distribution: uniform
+        low: 0.55
+        high: 0.75
+        shared_across_channels: true
+      offset:
+        distribution: uniform
+        low: 0.0
+        high: 0.0
+        shared_across_channels: true
+      variance:
+        distribution: uniform
+        low: 0.12
+        high: 0.18
+        shared_across_channels: true
+      phase:
+        distribution: uniform
+        low: 0.0
+        high: 6.283185307179586
+        shared_across_channels: true
+    cosine:
+      frequency:
+        distribution: uniform
+        low: 70.0
+        high: 90.0
+        shared_across_channels: true
+      amplitude:
+        distribution: uniform
+        low: 0.55
+        high: 0.75
+        shared_across_channels: true
+      offset:
+        distribution: uniform
+        low: 0.0
+        high: 0.0
+        shared_across_channels: true
+      variance:
+        distribution: uniform
+        low: 0.12
+        high: 0.18
+        shared_across_channels: true
+      phase:
+        distribution: uniform
+        low: 0.0
+        high: 6.283185307179586
+        shared_across_channels: true
+    random-mode-jump:
+      frequency:
+        distribution: int_uniform
+        low: 1400
+        high: 1800
+        shared_across_channels: true
+      channel_diff:
+        distribution: uniform
+        low: 0.0
+        high: 0.0
+        shared_across_channels: true
+      channel_offset:
+        distribution: uniform
+        low: 0.9
+        high: 1.1
+      variance:
+        distribution: uniform
+        low: 0.07
+        high: 0.10
+        shared_across_channels: true
+  anomaly_overrides:
+    lag-synchronization:
+      lag_steps:
+        distribution: int_uniform
+        low: 5
+        high: 7
+      transition_length:
+        distribution: int_uniform
+        low: 8
+        high: 12
+    mode-correlation: {}
+  variant_overrides:
+    sine__lag-synchronization:
+      anomaly:
+        lag_steps:
+          distribution: int_uniform
+          low: 8
+          high: 12
+
+plot:
+  enabled: true
+  dpi: 140
+  zoom_count: 5
+  zoom_margin: 100
+  zoom_margin_min: 100
+  zoom_margin_alpha: 0.0
+  zoom_fill_policy: repeat
+
+io:
+  csv_float_format: "%.8f"

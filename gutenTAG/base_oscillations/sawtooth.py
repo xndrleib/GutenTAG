@@ -41,12 +41,12 @@ class Sawtooth(BaseOscillationInterface):
         *args,
         **kwargs,
     ) -> np.ndarray:
-        n: int = length or self.length  # in points
-        f: float = frequency or self.frequency  # in Hz
-        a: float = amplitude or self.amplitude
-        v_freq_mod: float = freq_mod or self.freq_mod  # factor of f
-        v_width: float = width or self.width
-        v_phase: float = phase or 0.0
+        n: int = length if length is not None else self.length  # in points
+        f: float = frequency if frequency is not None else self.frequency  # in Hz
+        a: float = amplitude if amplitude is not None else self.amplitude
+        v_freq_mod: float = freq_mod if freq_mod is not None else self.freq_mod
+        v_width: float = width if width is not None else self.width
+        v_phase: float = phase if phase is not None else self.phase
 
         return sawtooth(n, f, a, v_freq_mod, v_width, v_phase)
 

@@ -1285,6 +1285,7 @@ class TSDatasetGenerator:
             "pair_id": variant.pair_id,
             "profile_id": variant.profile_id,
             "base_oscillation": variant.base_oscillation,
+            "carrier_family": self._classify_base_family(variant.base_oscillation),
             "anomaly_type": variant.anomaly_type,
             "splits": split_entries,
             "instance_count": len(variant_instance_summaries),
@@ -1553,6 +1554,7 @@ class TSDatasetGenerator:
             parameter_seed=int(seeds["params_seed"]),
         )
         anomaly_params_per_segment = self._resolve_anomaly_parameters_for_segments(
+            base_kind=variant.base_oscillation,
             anomaly_type=variant.anomaly_type,
             anomaly_parameter_template=anomaly_parameter_template,
             fixed_anomaly_parameters=fixed_anomaly_parameters,
@@ -1705,6 +1707,7 @@ class TSDatasetGenerator:
         if self.config.generate_plots:
             self._write_instance_plots(
                 instance_dir=instance_dir,
+                clean=clean,
                 anomalous=anomalous,
                 events=events,
                 zoom_seed=int(seeds["zoom_seed"]),
@@ -1717,9 +1720,32 @@ class TSDatasetGenerator:
     ) -> List[Dict[str, Any]]:
         if len(template) == 0:
             return [{} for _ in range(self.config.channels)]
-        return [
-            self._realize_parameters(template, rng) for _ in range(self.config.channels)
-        ]
+        shared_template: Dict[str, Any] = {}
+        per_channel_template: Dict[str, Any] = {}
+        for key, value in template.items():
+            if isinstance(value, Mapping) and bool(value.get("shared_across_channels", False)):
+                shared_spec = copy.deepcopy(dict(value))
+                shared_spec.pop("shared_across_channels", None)
+                shared_template[str(key)] = shared_spec
+            else:
+                per_channel_template[str(key)] = value
+
+        shared_values = (
+            self._realize_parameters(shared_template, rng)
+            if len(shared_template) > 0
+            else {}
+        )
+        realized: List[Dict[str, Any]] = []
+        for _ in range(self.config.channels):
+            channel_params = (
+                self._realize_parameters(per_channel_template, rng)
+                if len(per_channel_template) > 0
+                else {}
+            )
+            if len(shared_values) > 0:
+                channel_params.update(copy.deepcopy(shared_values))
+            realized.append(channel_params)
+        return realized
 
     def _compose_base_parameters_per_channel(
         self,
@@ -3487,6 +3513,9 @@ class TSDatasetGenerator:
             special = {}
         if anomaly_type == "mode-correlation":
             special.setdefault("channel_policy", "paired-random")
+            special.setdefault(
+                "segment_planner", {"planner": "mode_boundary_segments"}
+            )
         elif anomaly_type in {
             "correlation-flip",
             "covariance-change",
@@ -3555,6 +3584,7 @@ class TSDatasetGenerator:
 
     def _resolve_anomaly_parameters_for_segments(
         self,
+        base_kind: str,
         anomaly_type: str,
         anomaly_parameter_template: Mapping[str, Any],
         fixed_anomaly_parameters: Optional[Mapping[str, Any]],
@@ -3723,6 +3753,189 @@ class TSDatasetGenerator:
                 if "window_peak" in segment.attrs:
                     segment_params[idx]["window_peak"] = float(segment.attrs["window_peak"])
 
+        segment_params = self._apply_transition_policy_to_segments(
+            base_kind=base_kind,
+            anomaly_type=anomaly_type,
+            anomaly_parameter_template=anomaly_parameter_template,
+            segment_plan=segment_plan,
+            segment_params=segment_params,
+            parameter_seed=parameter_seed,
+        )
+        return segment_params
+
+    @staticmethod
+    def _classify_base_family(base_kind: str) -> str:
+        family_by_kind = {
+            "sine": "smooth_periodic",
+            "cosine": "smooth_periodic",
+            "shared-noise-sine": "structural_periodic",
+            "square": "discontinuous_periodic",
+            "sawtooth": "discontinuous_periodic",
+            "dirichlet": "discontinuous_periodic",
+            "polynomial": "smooth_trend",
+            "random-walk": "smooth_trend",
+            "ecg": "motif_rich",
+            "cylinder-bell-funnel": "motif_rich",
+            "mls": "motif_rich",
+            "random-mode-jump": "mode_switching",
+        }
+        return str(family_by_kind.get(str(base_kind), "other"))
+
+    @staticmethod
+    def _transition_cap_for_anomaly(anomaly_type: str, segment_length: int) -> int:
+        if anomaly_type == "trend":
+            return max(0, int(segment_length))
+        return max(0, int(segment_length // 2))
+
+    def _sample_transition_span(
+        self,
+        *,
+        anomaly_type: str,
+        base_family: str,
+        segment_length: int,
+        rng: np.random.Generator,
+    ) -> int:
+        cap = self._transition_cap_for_anomaly(anomaly_type, segment_length)
+        if cap <= 0:
+            return 0
+        if anomaly_type == "extremum":
+            return 0
+        if anomaly_type in {"mean", "platform", "variance"}:
+            mode = rng.choice(["abrupt", "mixed", "smooth"], p=[0.25, 0.50, 0.25])
+        elif anomaly_type in {"trend", "covariance-change", "correlation-flip", "shared-factor-break", "channel-rewiring"}:
+            mode = rng.choice(["mixed", "smooth"], p=[0.30, 0.70])
+        elif anomaly_type in {"pattern", "pattern-shift", "lag-synchronization", "frequency"}:
+            mode = rng.choice(["abrupt", "mixed", "smooth"], p=[0.15, 0.55, 0.30])
+        else:
+            mode = rng.choice(["abrupt", "mixed", "smooth"], p=[0.30, 0.50, 0.20])
+
+        if base_family in {"discontinuous_periodic", "mode_switching"} and mode == "smooth":
+            mode = "mixed"
+        if base_family == "smooth_trend" and anomaly_type in {
+            "trend",
+            "covariance-change",
+            "correlation-flip",
+            "shared-factor-break",
+        }:
+            mode = rng.choice(["mixed", "smooth"], p=[0.15, 0.85])
+        if base_family == "structural_periodic" and anomaly_type in {
+            "covariance-change",
+            "correlation-flip",
+            "shared-factor-break",
+        }:
+            mode = rng.choice(["mixed", "smooth"], p=[0.65, 0.35])
+        if base_family == "discontinuous_periodic" and anomaly_type in {
+            "pattern",
+            "pattern-shift",
+        }:
+            mode = rng.choice(["mixed", "smooth"], p=[0.75, 0.25])
+        if base_family == "motif_rich" and anomaly_type == "pattern":
+            mode = rng.choice(["mixed", "smooth"], p=[0.70, 0.30])
+
+        if mode == "abrupt":
+            low_ratio, high_ratio = 0.0, 0.04
+        elif mode == "mixed":
+            low_ratio, high_ratio = 0.06, 0.16
+        else:
+            low_ratio, high_ratio = 0.18, 0.32
+        sampled = int(round(float(rng.uniform(low_ratio, high_ratio)) * float(segment_length)))
+        if mode != "abrupt":
+            sampled = max(1, sampled)
+        return int(max(0, min(cap, sampled)))
+
+    def _apply_transition_policy_to_segments(
+        self,
+        *,
+        base_kind: str,
+        anomaly_type: str,
+        anomaly_parameter_template: Mapping[str, Any],
+        segment_plan: List[SegmentPlan],
+        segment_params: List[Dict[str, Any]],
+        parameter_seed: int,
+    ) -> List[Dict[str, Any]]:
+        if len(segment_params) == 0:
+            return segment_params
+        base_family = self._classify_base_family(base_kind)
+        default_transition_length = DEFAULT_ANOMALY_OVERRIDES.get(
+            anomaly_type, {}
+        ).get("transition_length")
+        default_transition_window = DEFAULT_ANOMALY_OVERRIDES.get(
+            anomaly_type, {}
+        ).get("transition_window")
+        template_transition_length = anomaly_parameter_template.get("transition_length")
+        template_transition_window = anomaly_parameter_template.get("transition_window")
+
+        for idx, segment in enumerate(segment_plan):
+            rng = np.random.default_rng(
+                _derive_seed(parameter_seed, "transition-policy", str(idx))
+            )
+            params = copy.deepcopy(segment_params[idx])
+            segment_length = max(1, int(segment.length))
+            transition_is_default = (
+                "transition_length" not in params
+                or template_transition_length == default_transition_length
+            )
+            transition_window_is_default = (
+                "transition_window" not in params
+                or template_transition_window == default_transition_window
+            )
+            if anomaly_type in {
+                "amplitude",
+                "trend",
+                "mean",
+                "platform",
+                "variance",
+                "pattern",
+                "covariance-change",
+                "correlation-flip",
+                "channel-rewiring",
+                "lag-synchronization",
+                "shared-factor-break",
+            } and transition_is_default:
+                params["transition_length"] = int(
+                    self._sample_transition_span(
+                        anomaly_type=anomaly_type,
+                        base_family=base_family,
+                        segment_length=segment_length,
+                        rng=rng,
+                    )
+                )
+            if anomaly_type == "pattern-shift" and transition_window_is_default:
+                params["transition_window"] = int(
+                    max(
+                        1,
+                        self._sample_transition_span(
+                            anomaly_type=anomaly_type,
+                            base_family=base_family,
+                            segment_length=segment_length,
+                            rng=rng,
+                        ),
+                    )
+                )
+            if anomaly_type == "pattern" and base_family in {
+                "discontinuous_periodic",
+                "motif_rich",
+                "mode_switching",
+            }:
+                params.setdefault("adaptive_blend", True)
+                params.setdefault("blend_strength", 1.0)
+            if anomaly_type == "pattern-shift" and "crossfade_mode" not in params:
+                params["crossfade_mode"] = (
+                    "cosine"
+                    if base_family in {"discontinuous_periodic", "motif_rich", "mode_switching"}
+                    else ("linear" if rng.random() < 0.35 else "cosine")
+                )
+            if anomaly_type == "trend":
+                params.setdefault("boundary_mode", "inside_window_zero_endpoints")
+                if "envelope_kind" not in params:
+                    params["envelope_kind"] = (
+                        "transition"
+                        if base_family in {"smooth_trend", "structural_periodic"}
+                        else "sine2"
+                    )
+            segment_params[idx] = self._sanitize_anomaly_parameters(
+                anomaly_type, params
+            )
         return segment_params
 
     def _realize_parameters(
@@ -4246,12 +4459,14 @@ class TSDatasetGenerator:
     def _write_instance_plots(
         self,
         instance_dir: Path,
+        clean: np.ndarray,
         anomalous: np.ndarray,
         events: List[Mapping[str, Any]],
         zoom_seed: int,
     ) -> None:
         self._plot_window(
             output_path=instance_dir / "plot_full.png",
+            clean=clean,
             anomalous=anomalous,
             events=events,
             window_start=0,
@@ -4287,6 +4502,7 @@ class TSDatasetGenerator:
             )
             self._plot_window(
                 output_path=output_path,
+                clean=clean,
                 anomalous=anomalous,
                 events=events,
                 window_start=window_start,
@@ -4326,6 +4542,7 @@ class TSDatasetGenerator:
     def _plot_window(
         self,
         output_path: Path,
+        clean: np.ndarray,
         anomalous: np.ndarray,
         events: List[Mapping[str, Any]],
         window_start: int,
@@ -4351,9 +4568,22 @@ class TSDatasetGenerator:
             axis = axes[channel]
             axis.plot(
                 x_values,
+                clean[window_start:window_end, channel],
+                linewidth=1.0,
+                color="#7f7f7f",
+                linestyle="--",
+                alpha=0.95,
+                label="clean",
+                zorder=2,
+            )
+            axis.plot(
+                x_values,
                 anomalous[window_start:window_end, channel],
-                linewidth=0.8,
+                linewidth=0.9,
                 color="#1f77b4",
+                alpha=0.95,
+                label="anomalous",
+                zorder=3,
             )
             axis.set_ylabel(f"ch {channel}")
             has_point_anomaly = False
@@ -4407,6 +4637,23 @@ class TSDatasetGenerator:
                             label="anomaly",
                         )
             legend_handles: List[Any] = [
+                Line2D(
+                    [0, 1],
+                    [0, 0],
+                    color="#7f7f7f",
+                    linestyle="--",
+                    linewidth=1.0,
+                    alpha=0.95,
+                    label="clean",
+                ),
+                Line2D(
+                    [0, 1],
+                    [0, 0],
+                    color="#1f77b4",
+                    linewidth=0.9,
+                    alpha=0.95,
+                    label="anomalous",
+                ),
                 Patch(color="#ff7f0e", alpha=0.20, label="anomaly"),
                 Patch(color="#d62728", alpha=0.30, label="selected anomaly"),
             ]

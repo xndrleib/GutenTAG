@@ -39,11 +39,11 @@ class SharedNoiseSine(Sine):
         *args,
         **kwargs,
     ) -> np.ndarray:
-        n: int = length or self.length
-        f: float = frequency or self.frequency
-        a: float = amplitude or self.amplitude
-        v_freq_mod: float = freq_mod or self.freq_mod
-        v_phase: float = phase or 0.0
+        n: int = length if length is not None else self.length
+        f: float = frequency if frequency is not None else self.frequency
+        a: float = amplitude if amplitude is not None else self.amplitude
+        v_freq_mod: float = freq_mod if freq_mod is not None else self.freq_mod
+        v_phase: float = phase if phase is not None else self.phase
         return shared_noise_sine(n, f, a, v_freq_mod, v_phase)
 
 

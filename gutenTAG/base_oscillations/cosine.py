@@ -38,11 +38,11 @@ class Cosine(BaseOscillationInterface):
         *args,
         **kwargs,
     ) -> np.ndarray:
-        n: int = length or self.length  # in points
-        f: float = frequency or self.frequency  # in Hz
-        a: float = amplitude or self.amplitude
-        v_freq_mod: float = freq_mod or self.freq_mod  # factor of f
-        v_phase: float = phase or 0.0
+        n: int = length if length is not None else self.length  # in points
+        f: float = frequency if frequency is not None else self.frequency  # in Hz
+        a: float = amplitude if amplitude is not None else self.amplitude
+        v_freq_mod: float = freq_mod if freq_mod is not None else self.freq_mod
+        v_phase: float = phase if phase is not None else self.phase
         return cosine(n, f, a, v_freq_mod, v_phase)
 
 
