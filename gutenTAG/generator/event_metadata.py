@@ -27,6 +27,18 @@ def build_event_record(
         if affected_channels is not None
         else [int(channel)]
     )
+    context_channels = sorted(
+        set(normalized_group_channels + normalized_affected + [int(channel)])
+    )
+    if extra is not None and "anchor_channel" in extra:
+        context_channels = sorted(
+            set(context_channels + [int(extra["anchor_channel"])])
+        )
+    event_scope = (
+        "relation"
+        if len(normalized_group_channels) > 1 and channel_visible is False
+        else "group" if len(normalized_group_channels) > 1 else "channel"
+    )
     record: dict[str, Any] = {
         "start": int(start),
         "end": int(end),
@@ -35,6 +47,10 @@ def build_event_record(
         "group_id": int(group_id),
         "group_channels": normalized_group_channels,
         "affected_channels": normalized_affected,
+        "operator_target_channels": normalized_affected,
+        "perturbed_channels": normalized_affected,
+        "context_channels": context_channels,
+        "event_scope": event_scope,
         "params": params,
         "length": int(end - start),
         "source_start": int(source_start),

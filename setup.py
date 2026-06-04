@@ -110,7 +110,9 @@ if __name__ == "__main__":
         long_description_content_type="text/markdown",
         url="https://github.com/TimeEval/gutentag",
         packages=find_packages(exclude=("tests", "tests.*")),
-        package_data={"gutenTAG": ["py.typed", "config/schema/*"]},
+        package_data={
+            "gutenTAG": ["py.typed", "config/schema/*", "utils/*.json"],
+        },
         cmdclass={
             "test": PyTestCommand,
             "typecheck": MyPyCheckCommand,

@@ -1,6 +1,6 @@
 generator:
-  output_root: data/ts_dataset_generated_segment_random_extremum_v9_strict_quality
-  master_seed: 4242
+  output_root: data/ts_dataset_generated_v11_audit_2x10000
+  master_seed: 101024
   overwrite_output: true
   log_level: INFO
   on_variant_failure: skip
@@ -9,7 +9,7 @@ dataset:
   length: 10000
   channels: 5
   splits: [train, val, test]
-  instances_per_split: 5
+  instances_per_split: 2
 
 anomaly_policy:
   density_range: [0.05, 0.10]
@@ -28,6 +28,8 @@ anomaly_policy:
   segment_planner:
     default:
       planner: uniform_segments
+    mode-correlation:
+      planner: mode_boundary_segments
     amplitude:
       planner: energy_aware_segments
       energy_metric: rms
@@ -48,15 +50,38 @@ anomaly_policy:
       min_effect_delta: 0.14
     extremum:
       planner: point_events_from_density
-      density_range: [0.05, 0.10]
+      segment_count_range: [20, 50]
       unique_timestamps: true
-  special_anomaly_policies: {}
+  special_anomaly_policies:
+    mode-correlation:
+      channel_policy: paired-random
+      density_tolerance: 0.10
+      min_segment_length: 8
+      segment_count_range: [4, 8]
+    covariance-change:
+      channel_policy: paired-random
+      density_tolerance: 0.03
+      min_segment_length: 24
+      segment_count_range: [8, 18]
+    correlation-flip:
+      channel_policy: paired-random
+      density_tolerance: 0.03
+      min_segment_length: 24
+      segment_count_range: [8, 18]
+    lag-synchronization:
+      channel_policy: paired-random
+      density_tolerance: 0.03
+      min_segment_length: 20
+      segment_count_range: [4, 8]
   min_segment_length_by_anomaly:
     amplitude: 5
+    correlation-flip: 24
+    covariance-change: 24
+    lag-synchronization: 20
     mean: 5
+    mode-correlation: 8
     variance: 8
     platform: 5
-    mode-correlation: 5
     pattern: 5
     pattern-shift: 5
     trend: 8
@@ -69,6 +94,7 @@ variants:
     - formula
   skip_anomaly_types: []
   disabled_anomaly_types: []
+  compatibility_mode: validated
   profiles_per_pair: 1
   pair_profiles:
     cosine__frequency: [p01]
@@ -168,6 +194,19 @@ variants:
         distribution: uniform
         low: 0.02
         high: 0.04
+    shared-noise-sine:
+      frequency:
+        distribution: uniform
+        low: 6.0
+        high: 8.0
+      amplitude:
+        distribution: uniform
+        low: 0.40
+        high: 0.55
+      variance:
+        distribution: uniform
+        low: 0.18
+        high: 0.24
     random-walk:
       smoothing:
         distribution: uniform
@@ -218,17 +257,22 @@ variants:
     random-mode-jump:
       frequency:
         distribution: int_uniform
-        low: 180
-        high: 320
+        low: 120
+        high: 180
       variance:
         distribution: uniform
-        low: 0.05
+        low: 0.07
         high: 0.10
       random-seed:
         distribution: int_uniform
         low: 1
-        high: 1000
+        high: 500
   base_channel_overrides:
+    shared-noise-sine:
+      phase:
+        distribution: uniform
+        low: 0.0
+        high: 6.283185307179586
     sine:
       frequency:
         distribution: uniform
@@ -421,24 +465,27 @@ variants:
     random-mode-jump:
       frequency:
         distribution: int_uniform
-        low: 160
-        high: 360
+        low: 120
+        high: 180
       channel_diff:
         distribution: uniform
-        low: 0.5
-        high: 1.5
+        low: 0.0
+        high: 0.0
       channel_offset:
         distribution: uniform
-        low: 0.5
-        high: 1.5
+        low: 0.9
+        high: 1.1
       variance:
         distribution: uniform
-        low: 0.05
+        low: 0.07
         high: 0.10
-  anomaly_parameter_policy: random_per_segment
+  anomaly_parameter_policy: fixed_per_variant
   anomaly_overrides:
     amplitude:
-      transition_length: 0
+      transition_length:
+        distribution: int_uniform
+        low: 0
+        high: 4
       amplitude_factor:
         distribution: choice
         values:
@@ -449,6 +496,10 @@ variants:
             low: 1.1
             high: 2.0
     mean:
+      transition_length:
+        distribution: int_uniform
+        low: 4
+        high: 10
       offset:
         distribution: choice
         values:
@@ -459,6 +510,10 @@ variants:
             low: 0.3
             high: 1.5
     variance:
+      transition_length:
+        distribution: int_uniform
+        low: 6
+        high: 12
       variance:
         distribution: uniform
         low: 0.05
@@ -470,6 +525,10 @@ variants:
         low: 0.7
         high: 1.6
     platform:
+      transition_length:
+        distribution: int_uniform
+        low: 4
+        high: 10
       value:
         distribution: uniform
         low: -1.5
@@ -496,6 +555,10 @@ variants:
       min_effect_delta: 0.10
       min_window_ptp: 0.05
       blend_strength: 1.0
+      transition_length:
+        distribution: int_uniform
+        low: 6
+        high: 12
     pattern-shift:
       transition_window:
         distribution: int_uniform
@@ -508,7 +571,10 @@ variants:
       crossfade_mode: cosine
       min_effect_delta: 0.08
     trend:
-      transition_length: 0
+      transition_length:
+        distribution: int_uniform
+        low: 8
+        high: 16
       boundary_mode: inside_window_zero_endpoints
       envelope_kind: sine2
       oscillation:
@@ -543,8 +609,190 @@ variants:
         distribution: int_uniform
         low: 20
         high: 200
+    correlation-flip:
+      target_correlation: -1.0
+      transition_length:
+        distribution: int_uniform
+        low: 10
+        high: 14
+    covariance-change:
+      coupling_strength: -0.95
+      transition_length:
+        distribution: int_uniform
+        low: 10
+        high: 14
+    lag-synchronization:
+      lag_steps:
+        distribution: int_uniform
+        low: 5
+        high: 7
+      transition_length:
+        distribution: int_uniform
+        low: 8
+        high: 12
     mode-correlation: {}
   variant_overrides:
+    cosine__lag-synchronization:
+      base_channel_correlation:
+        shared_noise_weight: 0.92
+      base_channel:
+        frequency:
+          distribution: uniform
+          low: 70.0
+          high: 90.0
+          shared_across_channels: true
+        amplitude:
+          distribution: uniform
+          low: 0.55
+          high: 0.75
+          shared_across_channels: true
+        offset:
+          distribution: uniform
+          low: 0.0
+          high: 0.0
+          shared_across_channels: true
+        variance:
+          distribution: uniform
+          low: 0.12
+          high: 0.18
+          shared_across_channels: true
+        phase:
+          distribution: uniform
+          low: 0.0
+          high: 6.283185307179586
+          shared_across_channels: true
+      anomaly:
+        lag_steps:
+          distribution: int_uniform
+          low: 5
+          high: 7
+        transition_length:
+          distribution: int_uniform
+          low: 8
+          high: 12
+      anomaly_policy:
+        density_range: [0.05, 0.10]
+        density_tolerance: 0.04
+        segment_count_range: [4, 8]
+    sine__lag-synchronization:
+      base_channel_correlation:
+        shared_noise_weight: 0.92
+      base_channel:
+        frequency:
+          distribution: uniform
+          low: 70.0
+          high: 90.0
+          shared_across_channels: true
+        amplitude:
+          distribution: uniform
+          low: 0.55
+          high: 0.75
+          shared_across_channels: true
+        offset:
+          distribution: uniform
+          low: 0.0
+          high: 0.0
+          shared_across_channels: true
+        variance:
+          distribution: uniform
+          low: 0.12
+          high: 0.18
+          shared_across_channels: true
+        phase:
+          distribution: uniform
+          low: 0.0
+          high: 6.283185307179586
+          shared_across_channels: true
+      anomaly:
+        lag_steps:
+          distribution: int_uniform
+          low: 8
+          high: 12
+        transition_length:
+          distribution: int_uniform
+          low: 8
+          high: 12
+      anomaly_policy:
+        density_range: [0.05, 0.10]
+        density_tolerance: 0.04
+        segment_count_range: [4, 8]
+    polynomial__correlation-flip:
+      base_channel_correlation:
+        shared_noise_weight: 0.95
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.10
+          high: 0.14
+      anomaly:
+        target_correlation: -1.0
+        transition_length:
+          distribution: int_uniform
+          low: 12
+          high: 16
+    shared-noise-sine__correlation-flip:
+      base_channel_correlation:
+        shared_noise_weight: 0.97
+      anomaly:
+        target_correlation: -1.0
+        transition_length:
+          distribution: int_uniform
+          low: 12
+          high: 16
+    polynomial__covariance-change:
+      base_channel_correlation:
+        shared_noise_weight: 0.94
+      base_oscillation:
+        variance:
+          distribution: uniform
+          low: 0.09
+          high: 0.13
+      anomaly:
+        transition_length:
+          distribution: int_uniform
+          low: 14
+          high: 18
+      anomaly_policy:
+        density_range: [0.02, 0.04]
+        density_tolerance: 0.04
+        segment_count_range: [4, 8]
+    random-mode-jump__mode-correlation:
+      base_channel_correlation:
+        shared_noise_weight: 0.90
+      base_channel:
+        frequency:
+          distribution: int_uniform
+          low: 1400
+          high: 1800
+          shared_across_channels: true
+        channel_diff:
+          distribution: uniform
+          low: 0.0
+          high: 0.0
+          shared_across_channels: true
+        variance:
+          distribution: uniform
+          low: 0.07
+          high: 0.10
+          shared_across_channels: true
+      anomaly_policy:
+        density_range: [0.05, 0.10]
+        density_tolerance: 0.08
+        segment_count_range: [4, 8]
+        segment_planner:
+          planner: mode_boundary_segments
+    shared-noise-sine__covariance-change:
+      base_channel_correlation:
+        shared_noise_weight: 0.97
+      anomaly:
+        transition_length:
+          distribution: int_uniform
+          low: 14
+          high: 18
+      anomaly_policy:
+        density_range: [0.02, 0.04]
+        density_tolerance: 0.04
+        segment_count_range: [4, 8]
     cosine__frequency:
       anomaly_policy: &period_locked_frequency_policy
         density_tolerance: 0.02
@@ -558,7 +806,16 @@ variants:
     dirichlet__frequency:
       anomaly_policy: *period_locked_frequency_policy
     ecg__frequency:
-      anomaly_policy: *period_locked_frequency_policy
+      anomaly_policy:
+        density_tolerance: 0.02
+        segment_count_range: [6, 10]
+        min_segment_length: 72
+        segment_planner:
+          planner: period_locked_frequency
+          periods_per_segment_range: [6, 8]
+          align_to_period_start: true
+          period_ratio_offsets: [-2, -1]
+          frequency_factor_bounds: [0.65, 0.95]
     sawtooth__frequency:
       anomaly_policy: *period_locked_frequency_policy
     sine__frequency:
@@ -567,7 +824,7 @@ variants:
       anomaly_policy: *period_locked_frequency_policy
 
 plot:
-  enabled: true
+  enabled: false
   dpi: 140
   zoom_count: 5
   zoom_margin: 100

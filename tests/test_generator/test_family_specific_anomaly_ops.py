@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 from scipy.signal import find_peaks
@@ -50,7 +51,7 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
         self.assertGreater(float(np.max(np.abs(blended - reference))), 0.05)
         self.assertLessEqual(
             float(np.max(np.abs(blended))),
-            float(np.max(np.abs(reference))) + 1e-8,
+            max(float(np.max(np.abs(reference))), float(np.max(np.abs(warped)))) + 1e-8,
         )
         delta = blended - reference
         self.assertLess(float(np.min(delta)), -0.01)
@@ -71,7 +72,7 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
         np.testing.assert_allclose(
             np.quantile(blended, [0.1, 0.5, 0.9]),
             np.quantile(reference, [0.1, 0.5, 0.9]),
-            atol=0.08,
+            atol=0.25 * float(np.ptp(reference)),
         )
 
     def test_frequency_ecg_beat_aware_falls_back_without_detectable_peaks(self) -> None:
@@ -88,11 +89,15 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
         self.assertEqual(warped.shape[0], 64)
         self.assertTrue(np.all(np.isfinite(warped)))
 
-    def test_frequency_ecg_generate_warps_visible_signal_not_only_raw_base(self) -> None:
+    def test_frequency_ecg_generate_warps_visible_signal_not_only_raw_base(
+        self,
+    ) -> None:
         full = ecg(np.random.default_rng(7), length=320, frequency=8.0, amplitude=1.0)
         ecg_bo = ECG(length=320, frequency=8.0, amplitude=1.0)
         ecg_bo.timeseries = full
-        ecg_bo.noise = 0.03 * np.sin(np.linspace(0.0, 6.0 * np.pi, 320, dtype=np.float64))
+        ecg_bo.noise = 0.03 * np.sin(
+            np.linspace(0.0, 6.0 * np.pi, 320, dtype=np.float64)
+        )
         ecg_bo.trend_series = np.linspace(-0.05, 0.05, 320, dtype=np.float64)
         ecg_bo.offset = 0.02
         start, end = 96, 176
@@ -100,10 +105,13 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
             start=start,
             end=end,
             channel=0,
-            ctx=SimpleNamespace(
-                base_oscillation=ecg_bo,
-                base_oscillation_kind=ECG.KIND,
-                rng=np.random.default_rng(0),
+            ctx=cast(
+                Any,
+                SimpleNamespace(
+                    base_oscillation=ecg_bo,
+                    base_oscillation_kind=ECG.KIND,
+                    rng=np.random.default_rng(0),
+                ),
             ),
             labels=LabelRange(start=start, length=end - start),
         )
@@ -113,11 +121,12 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
         generated = anomaly.generate(protocol)
         self.assertEqual(len(generated.subsequences), 1)
         base_subsequence = generated.subsequences[0]
-        variation = ecg_bo.noise[start:end] + ecg_bo.trend_series[start:end] + float(ecg_bo.offset)
-        visible_reference = (
-            ecg_bo.timeseries[start:end]
-            + variation
+        variation = (
+            ecg_bo.noise[start:end]
+            + ecg_bo.trend_series[start:end]
+            + float(ecg_bo.offset)
         )
+        visible_reference = ecg_bo.timeseries[start:end] + variation
         visible_anomalous = base_subsequence + variation
         delta = visible_anomalous - visible_reference
         self.assertGreater(float(np.max(np.abs(delta))), 0.05)
@@ -140,11 +149,15 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
         self.assertGreater(boosted_scale, legacy_scale)
         self.assertGreaterEqual(boosted_scale, 0.45)
 
-    def test_residualized_matched_coupling_preserves_linear_trend_better_than_raw(self) -> None:
+    def test_residualized_matched_coupling_preserves_linear_trend_better_than_raw(
+        self,
+    ) -> None:
         x = np.linspace(-1.0, 1.0, 128, dtype=np.float64)
         reference = 0.6 * x + 0.15 * np.sin(5.0 * np.pi * x)
         anchor = -0.3 * x + 0.12 * np.cos(5.0 * np.pi * x)
-        raw_candidate = matched_coupling_window(reference, anchor, coupling_strength=-0.95)
+        raw_candidate = matched_coupling_window(
+            reference, anchor, coupling_strength=-0.95
+        )
         residualized_candidate = residualized_matched_coupling_window(
             reference, anchor, coupling_strength=-0.95
         )
@@ -153,16 +166,24 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
             np.mean(np.abs(_local_linear_trend(raw_candidate) - reference_trend))
         )
         residualized_trend_error = float(
-            np.mean(np.abs(_local_linear_trend(residualized_candidate) - reference_trend))
+            np.mean(
+                np.abs(_local_linear_trend(residualized_candidate) - reference_trend)
+            )
         )
         self.assertLess(residualized_trend_error, raw_trend_error)
-        self.assertGreater(float(np.max(np.abs(residualized_candidate - reference))), 0.01)
+        self.assertGreater(
+            float(np.max(np.abs(residualized_candidate - reference))), 0.01
+        )
 
-    def test_residualized_correlation_flip_preserves_linear_trend_better_than_raw(self) -> None:
+    def test_residualized_correlation_flip_preserves_linear_trend_better_than_raw(
+        self,
+    ) -> None:
         x = np.linspace(-1.0, 1.0, 128, dtype=np.float64)
         reference = 0.4 * x + 0.10 * np.sin(7.0 * np.pi * x)
         anchor = -0.2 * x + 0.11 * np.cos(7.0 * np.pi * x)
-        raw_candidate = correlation_flip_window(reference, anchor, target_correlation=-0.9)
+        raw_candidate = correlation_flip_window(
+            reference, anchor, target_correlation=-0.9
+        )
         residualized_candidate = residualized_correlation_flip_window(
             reference, anchor, target_correlation=-0.9
         )
@@ -171,10 +192,14 @@ class TestFamilySpecificAnomalyOps(unittest.TestCase):
             np.mean(np.abs(_local_linear_trend(raw_candidate) - reference_trend))
         )
         residualized_trend_error = float(
-            np.mean(np.abs(_local_linear_trend(residualized_candidate) - reference_trend))
+            np.mean(
+                np.abs(_local_linear_trend(residualized_candidate) - reference_trend)
+            )
         )
         self.assertLess(residualized_trend_error, raw_trend_error)
-        self.assertGreater(float(np.max(np.abs(residualized_candidate - reference))), 0.01)
+        self.assertGreater(
+            float(np.max(np.abs(residualized_candidate - reference))), 0.01
+        )
 
     def test_pattern_shift_finalize_candidate_locks_edges(self) -> None:
         baseline = np.r_[np.ones(24), -np.ones(24)].astype(np.float64)

@@ -22,12 +22,12 @@ You can install GutenTAG from the official Python Package Index or from source.
 
   cd GutenTAG
 
-  # (optionally) create a new conda environment with Python 3
-  conda create -n gutentag python=3.8
+  # (optionally) create a new conda environment with the current release Python
+  conda create -n gutentag python=3.14
   conda activate gutentag
 
   # install dependencies
-  pip install -r requirements.txt
+  pip install -e .
   ```
 
 Test the installation with `python -m gutenTAG` and you should see the greeting and usage instructions:

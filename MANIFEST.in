@@ -1,2 +1,4 @@
 include README.md
 include logo_transparent.png
+recursive-include gutenTAG/config/schema *
+recursive-include gutenTAG/utils *.json

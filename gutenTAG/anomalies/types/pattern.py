@@ -6,6 +6,7 @@ import numpy as np
 from . import BaseAnomaly
 from .. import AnomalyProtocol
 from ...base_oscillations import CylinderBellFunnel, ECG, Square, Sawtooth, MLS
+from ...tsgen.signal_ops import match_boundary_value_and_slope
 
 
 @dataclass
@@ -38,7 +39,9 @@ class AnomalyPattern(BaseAnomaly):
         base_kind = anomaly_protocol.base_oscillation_kind
 
         def effective_transition_length(length: int) -> Optional[int]:
-            requested = 0 if self.transition_length is None else int(self.transition_length)
+            requested = (
+                0 if self.transition_length is None else int(self.transition_length)
+            )
             if base_kind in {Sawtooth.KIND, Square.KIND}:
                 return int(max(1, min(max(2, requested), max(2, length // 10))))
             if base_kind in {
@@ -49,7 +52,10 @@ class AnomalyPattern(BaseAnomaly):
                 return int(
                     max(
                         requested,
-                        min(max(2, int(round(0.18 * float(length)))), max(0, length // 3)),
+                        min(
+                            max(2, int(round(0.18 * float(length)))),
+                            max(0, length // 3),
+                        ),
                     )
                 )
             return self.transition_length
@@ -65,7 +71,9 @@ class AnomalyPattern(BaseAnomaly):
                 return int(max(1, min(length // 8, round(0.06 * float(length)))))
             return 0
 
-        def finalize_candidate(candidate: np.ndarray, reference: np.ndarray) -> np.ndarray:
+        def finalize_candidate(
+            candidate: np.ndarray, reference: np.ndarray
+        ) -> np.ndarray:
             if base_kind in {Sawtooth.KIND, Square.KIND}:
                 return self._replace_core_keep_edges(
                     candidate,
@@ -77,11 +85,12 @@ class AnomalyPattern(BaseAnomaly):
                 reference,
                 effective_transition_length(reference.shape[0]),
             )
-            return self._lock_reference_edges(
+            candidate = self._lock_reference_edges(
                 candidate,
                 reference,
                 edge_lock_width(reference.shape[0]),
             )
+            return match_boundary_value_and_slope(candidate, reference)
 
         def sinusoid_template(length: int, k: float) -> np.ndarray:
             if length <= 0:
@@ -93,6 +102,17 @@ class AnomalyPattern(BaseAnomaly):
                 return t
             return np.arctan(k * t) / np.arctan(k)
 
+        def restore_effect_floor(
+            candidate: np.ndarray, reference: np.ndarray, min_required: float
+        ) -> np.ndarray:
+            if min_required <= 0.0 or candidate.shape[0] != reference.shape[0]:
+                return candidate
+            delta = candidate - reference
+            max_delta = float(np.max(np.abs(delta))) if delta.size else 0.0
+            if max_delta <= 1e-12 or max_delta >= min_required:
+                return candidate
+            return reference + delta * (min_required / max_delta)
+
         def enforce_min_effect(
             candidate: np.ndarray, reference: np.ndarray
         ) -> np.ndarray:
@@ -100,10 +120,12 @@ class AnomalyPattern(BaseAnomaly):
                 return candidate
             if candidate.shape[0] != reference.shape[0]:
                 return candidate
-            candidate = finalize_candidate(candidate, reference)
+            min_required = max(self.min_effect_delta, 1e-10)
+            candidate = restore_effect_floor(
+                finalize_candidate(candidate, reference), reference, min_required
+            )
             delta = candidate - reference
             max_delta = float(np.max(np.abs(delta)))
-            min_required = max(self.min_effect_delta, 1e-10)
             if max_delta >= min_required:
                 return candidate
             template = sinusoid_template(int(reference.size), float(self.sinusoid_k))
@@ -121,12 +143,16 @@ class AnomalyPattern(BaseAnomaly):
                     return corrected
                 center_idx = int(corrected.size // 2)
                 corrected[center_idx] = corrected[center_idx] + min_required
-                return finalize_candidate(corrected, reference)
+                return restore_effect_floor(
+                    finalize_candidate(corrected, reference), reference, min_required
+                )
             blend = float(self.blend_strength)
             if self.adaptive_blend and self.min_effect_delta > 0.0:
                 blend = max(blend, self.min_effect_delta / target_max_delta)
             blended = reference + blend * target_delta
-            return finalize_candidate(blended, reference)
+            return restore_effect_floor(
+                finalize_candidate(blended, reference), reference, min_required
+            )
 
         if anomaly_protocol.base_oscillation_kind == CylinderBellFunnel.KIND:
             cbf = anomaly_protocol.base_oscillation
@@ -276,15 +302,11 @@ class AnomalyPattern(BaseAnomaly):
         edge = min(int(edge_width), max(1, n // 4))
         if edge <= 0:
             return cand[:n]
-        alpha = 0.5 * (
-            1.0 - np.cos(np.linspace(0.0, np.pi, edge, dtype=np.float64))
-        )
+        alpha = 0.5 * (1.0 - np.cos(np.linspace(0.0, np.pi, edge, dtype=np.float64)))
         cand = cand[:n]
         ref = ref[:n]
         cand[:edge] = (alpha * cand[:edge]) + ((1.0 - alpha) * ref[:edge])
-        cand[-edge:] = (
-            alpha[::-1] * cand[-edge:] + (1.0 - alpha[::-1]) * ref[-edge:]
-        )
+        cand[-edge:] = alpha[::-1] * cand[-edge:] + (1.0 - alpha[::-1]) * ref[-edge:]
         lock = min(edge, max(1, edge // 2))
         cand[:lock] = ref[:lock]
         cand[-lock:] = ref[-lock:]

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -43,7 +44,9 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             places=6,
         )
 
-    def test_qc_v2_channel_role_distinguishes_primary_affected_and_context(self) -> None:
+    def test_qc_v2_channel_role_distinguishes_primary_affected_and_context(
+        self,
+    ) -> None:
         module = _load_qc_module()
         self.assertEqual(
             module.classify_group_channel_role(
@@ -70,7 +73,9 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             "context_channel",
         )
 
-    def test_qc_v2_semantic_family_classifies_boundary_anchored_structural(self) -> None:
+    def test_qc_v2_semantic_family_classifies_boundary_anchored_structural(
+        self,
+    ) -> None:
         module = _load_qc_module()
         semantic_family = module.classify_semantic_family(
             anomaly_type="mode-correlation",
@@ -111,6 +116,23 @@ class TestDatasetQualityQCV2(unittest.TestCase):
         )
         self.assertFalse(passed)
         self.assertEqual(reason, "uni_shortcut_affected")
+
+        passed, reason = module.evaluate_semantic_policy(
+            semantic_family="relation_only_multivariate",
+            review_bucket="relation_shift",
+            zero_effect=False,
+            detectability_pass=True,
+            effect_inside_share_l1=0.95,
+            far_field_out_ratio_l2=0.01,
+            uni_detector_max=1.12,
+            uni_detector_affected_max=1.12,
+            uni_detector_context_max=0.65,
+            multi_detector_max=1.40,
+            detector_preference_margin=0.28,
+            thresholds=thresholds,
+        )
+        self.assertTrue(passed)
+        self.assertEqual(reason, "pass")
 
         passed, reason = module.evaluate_semantic_policy(
             semantic_family="relation_only_multivariate",
@@ -245,7 +267,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
     def test_qc_v2_invariant_policy_review_and_difficulty_fixtures(self) -> None:
         module = _load_qc_module()
         thresholds = module.QCThresholds()
-        fixtures = [
+        fixtures: list[dict[str, Any]] = [
             {
                 "name": "clean_univariate_amplitude",
                 "semantic_family": "univariate",
@@ -651,24 +673,30 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             self.assertIn("uni_detector_affected_max", group_metrics.columns)
             self.assertIn("uni_detector_context_max", group_metrics.columns)
             self.assertIn("effect_center_of_mass_relative", group_metrics.columns)
-            self.assertIn(
-                "effect_center_offset_from_midpoint", group_metrics.columns
-            )
+            self.assertIn("effect_center_offset_from_midpoint", group_metrics.columns)
             self.assertIn("semantic_policy_pass", group_metrics.columns)
             self.assertIn("semantic_policy_warning_reason", group_metrics.columns)
             self.assertIn("channel_role", group_channel_metrics.columns)
             self.assertIn("uni_detector_max", group_channel_metrics.columns)
-            self.assertIn("uni_visibility_sample_count", detector_calibration_summary.columns)
+            self.assertIn(
+                "uni_visibility_sample_count", detector_calibration_summary.columns
+            )
             self.assertIn("uses_dataset_default", detector_calibration_summary.columns)
             self.assertIn(
                 "shortcut_share_ge_warn_threshold", group_channel_summary.columns
             )
             self.assertIn("uni_visibility_scale", detector_calibration_summary.columns)
             self.assertFalse(
-                (group_metrics["semantic_policy_failure_reason"] == "pending_calibration").any()
+                (
+                    group_metrics["semantic_policy_failure_reason"]
+                    == "pending_calibration"
+                ).any()
             )
             self.assertFalse(
-                (group_metrics["semantic_policy_warning_reason"] == "pending_calibration").any()
+                (
+                    group_metrics["semantic_policy_warning_reason"]
+                    == "pending_calibration"
+                ).any()
             )
             self.assertLessEqual(len(group_metrics), len(event_metrics))
             self.assertGreaterEqual(len(group_channel_metrics), len(group_metrics))
@@ -676,9 +704,9 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                 (event_metrics["semantic_family"] == "relation_only_multivariate").any()
             )
             self.assertTrue(
-                group_channel_metrics["channel_role"].isin(
-                    ["primary_event_channel", "affected_channel", "context_channel"]
-                ).all()
+                group_channel_metrics["channel_role"]
+                .isin(["primary_event_channel", "affected_channel", "context_channel"])
+                .all()
             )
 
             for name in [

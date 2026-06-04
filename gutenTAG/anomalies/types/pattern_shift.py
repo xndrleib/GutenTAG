@@ -5,6 +5,7 @@ import numpy as np
 
 from . import BaseAnomaly
 from .. import AnomalyProtocol
+from ...tsgen.signal_ops import match_boundary_value_and_slope
 
 
 @dataclass
@@ -52,7 +53,11 @@ class AnomalyPatternShift(BaseAnomaly):
             subsequence: np.ndarray, shift_value: int, transition_window: int
         ) -> np.ndarray:
             length = subsequence.shape[0]
-            if transition_window <= 1 or length <= 2 * transition_window or shift_value == 0:
+            if (
+                transition_window <= 1
+                or length <= 2 * transition_window
+                or shift_value == 0
+            ):
                 shifted_simple = np.roll(subsequence, shift_value).astype(
                     np.float64, copy=True
                 )
@@ -68,19 +73,15 @@ class AnomalyPatternShift(BaseAnomaly):
             else:
                 alpha = 0.5 * (
                     1.0
-                    - np.cos(
-                        np.linspace(0.0, np.pi, local_window, dtype=np.float64)
-                    )
+                    - np.cos(np.linspace(0.0, np.pi, local_window, dtype=np.float64))
                 )
             blended = shifted.astype(np.float64, copy=True)
-            blended[:local_window] = (
-                (1.0 - alpha) * subsequence[:local_window]
-                + alpha * shifted[:local_window]
-            )
-            blended[-local_window:] = (
-                (1.0 - alpha[::-1]) * subsequence[-local_window:]
-                + alpha[::-1] * shifted[-local_window:]
-            )
+            blended[:local_window] = (1.0 - alpha) * subsequence[
+                :local_window
+            ] + alpha * shifted[:local_window]
+            blended[-local_window:] = (1.0 - alpha[::-1]) * subsequence[
+                -local_window:
+            ] + alpha[::-1] * shifted[-local_window:]
             blended[0] = subsequence[0]
             blended[-1] = subsequence[-1]
             return blended
@@ -108,7 +109,9 @@ class AnomalyPatternShift(BaseAnomaly):
             if shift_by == 0 and transition_window > 0 and length > 1:
                 shift_by = 1
 
-            blended = build_shifted_subsequence(subsequence, shift_by, transition_window)
+            blended = build_shifted_subsequence(
+                subsequence, shift_by, transition_window
+            )
             blended = self._finalize_candidate(
                 blended,
                 subsequence,
@@ -127,7 +130,9 @@ class AnomalyPatternShift(BaseAnomaly):
                         continue
                     if candidate == shift_by:
                         continue
-                    alt = build_shifted_subsequence(subsequence, candidate, transition_window)
+                    alt = build_shifted_subsequence(
+                        subsequence, candidate, transition_window
+                    )
                     alt = self._finalize_candidate(
                         alt,
                         subsequence,
@@ -208,7 +213,8 @@ class AnomalyPatternShift(BaseAnomaly):
                 candidate, baseline, int(max(0, edge_lock_width))
             )
         blended = cls.blend_with_reference(candidate, baseline, transition_window)
-        return cls._lock_reference_edges(blended, baseline, 0)
+        blended = cls._lock_reference_edges(blended, baseline, 0)
+        return match_boundary_value_and_slope(blended, baseline)
 
     @staticmethod
     def _lock_reference_edges(
@@ -224,9 +230,7 @@ class AnomalyPatternShift(BaseAnomaly):
         if n <= 2:
             return cand[:n]
         edge = min(int(edge_width), max(1, n // 4))
-        alpha = 0.5 * (
-            1.0 - np.cos(np.linspace(0.0, np.pi, edge, dtype=np.float64))
-        )
+        alpha = 0.5 * (1.0 - np.cos(np.linspace(0.0, np.pi, edge, dtype=np.float64)))
         cand = cand[:n]
         ref = ref[:n]
         cand[:edge] = alpha * cand[:edge] + (1.0 - alpha) * ref[:edge]

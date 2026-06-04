@@ -13,7 +13,7 @@ defaults:
 
 jobs:
   check:
-    name: Run checks for GutenTAG on ubuntu with python 3.9
+    name: Run checks for GutenTAG on ubuntu with python 3.11
     runs-on: ubuntu-latest
 
     steps:
@@ -23,8 +23,8 @@ jobs:
         with:
           use-mamba: true
           auto-update-conda: true
-          python-version: "3.9"
-          channels: defaults
+          python-version: "3.11"
+          channels: conda-forge
       - name: Install dependencies
         run: |
           pip install ".[dev]"
@@ -42,7 +42,7 @@ jobs:
       max-parallel: 3
       matrix:
         os: [ubuntu-latest] # [ubuntu-latest, windows-latest, macOS-latest]
-        python_version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python_version: ["3.11", "3.12", "3.13", "3.14"]
       fail-fast: false
 
     steps:
@@ -53,7 +53,7 @@ jobs:
         use-mamba: true
         auto-update-conda: true
         python-version: ${{ matrix.python_version }}
-        channels: defaults
+        channels: conda-forge
     - name: Install dependencies
       run: |
         pip install ".[dev]"
@@ -61,7 +61,7 @@ jobs:
       run: |
         python setup.py test
     - name: Extract test coverage
-      if: ${{ matrix.python_version == '3.13' && matrix.os == 'ubuntu-latest' }}
+      if: ${{ matrix.python_version == '3.14' && matrix.os == 'ubuntu-latest' }}
       run: |
         SUMMARY=$(sed -n "s/^<coverage.*line-rate=\"\([0-9.]*\)\".*>$/\1/p" coverage.xml)
         echo "COVERAGE=$(echo ${SUMMARY})" >> $GITHUB_ENV
@@ -72,7 +72,7 @@ jobs:
         echo "BRANCH=$(echo ${BRANCH_NAME})" >> $GITHUB_ENV
         echo "Extracted branch name: $BRANCH_NAME"
     - name: Create coverage badge
-      if: ${{ matrix.python_version == '3.13' && matrix.os == 'ubuntu-latest' }}
+      if: ${{ matrix.python_version == '3.14' && matrix.os == 'ubuntu-latest' }}
       uses: schneegans/dynamic-badges-action@v1.7.0
       with:
         auth: ${{ secrets.GIST_SECRET }}
@@ -83,7 +83,7 @@ jobs:
         color: green
         namedLogo: pytest
     - name: Upload Coverage to Codecov
-      if: ${{ matrix.python_version == '3.13' && matrix.os == 'ubuntu-latest' }}
+      if: ${{ matrix.python_version == '3.14' && matrix.os == 'ubuntu-latest' }}
       uses: codecov/codecov-action@v5
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -106,8 +106,8 @@ jobs:
       with:
         use-mamba: true
         auto-update-conda: true
-        python-version: 3.9
-        channels: defaults
+        python-version: "3.14"
+        channels: conda-forge
     - name: Build source distribution
       run: |
         python setup.py sdist
@@ -132,8 +132,8 @@ jobs:
         with:
           use-mamba: true
           auto-update-conda: true
-          python-version: 3.9
-          channels: defaults
+          python-version: "3.14"
+          channels: conda-forge
       - name: Build pure-Python wheel
         run: |
           python -m pip wheel --no-deps --wheel-dir dist/ .

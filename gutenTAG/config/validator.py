@@ -1,7 +1,7 @@
 from typing import Any, Dict, Optional
 
 import jsonschema
-from jsonschema import RefResolver
+from referencing import Registry, Resource
 
 from ..anomalies import AnomalyKind
 from ..base_oscillations import BaseOscillation
@@ -32,24 +32,29 @@ class ConfigValidator:
     def __init__(self) -> None:
         loader: ConfigSchemaLoader = FileSystemConfigSchemaLoader.from_packaged_schema()
         # load base schema
-        base_schema_name = CONFIG_SCHEMA.schema_name(CONFIG_SCHEMA.BASE_ID)
         base_schema = loader.load_schema_file(CONFIG_SCHEMA.BASE_ID)
 
         # load schema parts
-        schema_parts: dict[str, str] = {}
+        schema_parts: dict[str, dict] = {}
         for schema_part_id in CONFIG_SCHEMA.SCHEMA_PART_IDS:
             name = CONFIG_SCHEMA.schema_name(schema_part_id)
-            schema_parts[name] = loader.load_schema_file(schema_part_id)  # type: ignore
+            schema_parts[name] = loader.load_schema_file(schema_part_id)
 
-        # create resolver containing all schema parts
+        resources = []
+        for schema in (base_schema, *schema_parts.values()):
+            schema_id = schema.get("$id")
+            if schema_id is not None:
+                resources.append((schema_id, Resource.from_contents(schema)))
+
         self.base_schema = base_schema
-        self.resolver = RefResolver(
-            base_uri=base_schema_name, referrer=base_schema, store=schema_parts
+        self.validator = jsonschema.Draft202012Validator(
+            base_schema,
+            registry=Registry().with_resources(resources),
         )
 
     def validate(self, config: Dict) -> None:
         self.gutentag_validate(config)
-        jsonschema.validate(config, self.base_schema, resolver=self.resolver)
+        self.validator.validate(config)
 
     @staticmethod
     def gutentag_validate(config: Dict) -> None:

@@ -12,7 +12,7 @@ defaults:
 
 jobs:
   check:
-    name: Run checks for GutenTAG on ubuntu with python 3.9
+    name: Run checks for GutenTAG on ubuntu with python 3.11
     runs-on: ubuntu-latest
 
     steps:
@@ -22,8 +22,8 @@ jobs:
         with:
           use-mamba: true
           auto-update-conda: true
-          python-version: "3.9"
-          channels: defaults
+          python-version: "3.11"
+          channels: conda-forge
       - name: Install dependencies
         run: |
           pip install ".[dev]"
@@ -41,7 +41,7 @@ jobs:
       max-parallel: 3
       matrix:
         os: [ubuntu-latest] # [ubuntu-latest, windows-latest, macOS-latest]
-        python_version: ["3.9", "3.13"]
+        python_version: ["3.11", "3.14"]
       fail-fast: false
 
     steps:
@@ -52,7 +52,7 @@ jobs:
         use-mamba: true
         auto-update-conda: true
         python-version: ${{ matrix.python_version }}
-        channels: defaults
+        channels: conda-forge
     - name: Install dependencies
       run: |
         pip install ".[dev]"

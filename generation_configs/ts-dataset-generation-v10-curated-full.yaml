@@ -671,7 +671,7 @@ variants:
           low: 8
           high: 12
       anomaly_policy:
-        density_range: [0.02, 0.04]
+        density_range: [0.05, 0.10]
         density_tolerance: 0.04
         segment_count_range: [4, 8]
     sine__lag-synchronization:
@@ -713,7 +713,7 @@ variants:
           low: 8
           high: 12
       anomaly_policy:
-        density_range: [0.02, 0.04]
+        density_range: [0.05, 0.10]
         density_tolerance: 0.04
         segment_count_range: [4, 8]
     polynomial__correlation-flip:
@@ -776,7 +776,7 @@ variants:
           high: 0.10
           shared_across_channels: true
       anomaly_policy:
-        density_range: [0.02, 0.04]
+        density_range: [0.05, 0.10]
         density_tolerance: 0.08
         segment_count_range: [4, 8]
         segment_planner:

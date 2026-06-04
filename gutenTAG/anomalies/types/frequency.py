@@ -7,6 +7,7 @@ from scipy.signal import find_peaks
 from . import BaseAnomaly, AnomalyProtocol
 from ...base_oscillations import ECG
 from ...base_oscillations.utils.math_func_support import prepare_base_signal
+from ...tsgen.signal_ops import match_boundary_value_and_slope
 
 
 @dataclass
@@ -49,6 +50,7 @@ class AnomalyFrequency(BaseAnomaly):
                     reference,
                     self._motif_transition_length(reference.shape[0]),
                 )
+                subsequence = match_boundary_value_and_slope(subsequence, reference)
                 subsequence = (
                     subsequence
                     - variation[anomaly_protocol.start : anomaly_protocol.end]
@@ -157,9 +159,7 @@ class AnomalyFrequency(BaseAnomaly):
         return float(max(0.5, scale))
 
     @classmethod
-    def _get_ecg_peaks(
-        cls, ecg: ECG, full_reference: np.ndarray
-    ) -> np.ndarray:
+    def _get_ecg_peaks(cls, ecg: ECG, full_reference: np.ndarray) -> np.ndarray:
         source_id = id(full_reference)
         cached_source_id = getattr(ecg, "_frequency_peak_source_id", None)
         cached_peaks = getattr(ecg, "_frequency_peaks", None)
@@ -186,7 +186,9 @@ class AnomalyFrequency(BaseAnomaly):
             kernel_width = max(5, int(round(series.size / 6.0)))
         else:
             kernel_width = max(5, int(round(1.75 * float(expected_period))))
-        kernel_width = min(kernel_width, series.size if series.size % 2 == 1 else series.size - 1)
+        kernel_width = min(
+            kernel_width, series.size if series.size % 2 == 1 else series.size - 1
+        )
         kernel_width = max(3, kernel_width)
         if kernel_width % 2 == 0:
             kernel_width = max(3, kernel_width - 1)
@@ -229,8 +231,12 @@ class AnomalyFrequency(BaseAnomaly):
         expected_period = cls._expected_period_samples(getattr(ecg, "frequency", None))
         baseline = cls._smooth_baseline(clean_window, expected_period)
         residual = clean_window - baseline
-        local_peaks = cls._detect_ecg_peaks(residual, expected_period).astype(np.float64)
-        local_peaks = local_peaks[(local_peaks > 1.0) & (local_peaks < float(length - 2))]
+        local_peaks = cls._detect_ecg_peaks(residual, expected_period).astype(
+            np.float64
+        )
+        local_peaks = local_peaks[
+            (local_peaks > 1.0) & (local_peaks < float(length - 2))
+        ]
         if local_peaks.size < 2:
             return cls._warp_reference_window(
                 full_reference=clean_window,
@@ -322,7 +328,9 @@ class AnomalyFrequency(BaseAnomaly):
 
         def build_candidate(start_idx: int) -> np.ndarray:
             local_start = int(np.clip(start_idx, 0, max_source_start))
-            source = np.asarray(reference[local_start : local_start + source_length], dtype=np.float64)
+            source = np.asarray(
+                reference[local_start : local_start + source_length], dtype=np.float64
+            )
             if source.shape[0] <= 1:
                 return clean_window
             source_baseline = AnomalyFrequency._smooth_baseline(source, expected_period)
@@ -351,9 +359,7 @@ class AnomalyFrequency(BaseAnomaly):
         for candidate_start in sorted(set(candidates)):
             warped = build_candidate(candidate_start)
             delta = warped - clean_window
-            score = float(np.max(np.abs(delta))) + 0.25 * float(
-                np.mean(np.abs(delta))
-            )
+            score = float(np.max(np.abs(delta))) + 0.25 * float(np.mean(np.abs(delta)))
             if score > best_score:
                 best_score = score
                 best = warped
@@ -377,11 +383,7 @@ class AnomalyFrequency(BaseAnomaly):
             anchored[0] = ref[0]
             return anchored
 
-        left_delta = float(ref[0] - anchored[0])
-        right_delta = float(ref[-1] - anchored[-1])
-        alpha = np.linspace(0.0, 1.0, n, dtype=np.float64)
-        anchored += (1.0 - alpha) * left_delta + alpha * right_delta
-        return anchored
+        return match_boundary_value_and_slope(anchored, ref)
 
     @property
     def requires_period_start_position(self) -> bool:

@@ -41,15 +41,27 @@ oneOf:
   - $ref: "#/definitions/variance-params"
   - $ref: "#/definitions/amplitude-params"
   - $ref: "#/definitions/mode-correlation-params"
-  - properties:
+  - required:
+      - kind
+      - oscillation
+    properties:
       kind:
         const: trend
       oscillation:
         $ref: oscillation.guten-tag-generation-config.schema.yaml
-      required:
-        - kind
-        - oscillation
-      additionalProperties: false
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+      boundary_mode:
+        type: string
+        enum: [inside_window_zero_endpoints, legacy_carry_over]
+      envelope_kind:
+        type: string
+        enum: [sine2, sin2, transition]
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
+    additionalProperties: false
 
 definitions:
   correlation-flip-params:
@@ -141,6 +153,12 @@ definitions:
       offset:
         type: number
         description: Offset to shift the time series on the y axis within this anomaly region.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
     additionalProperties: false
   pattern-params:
     required:
@@ -168,6 +186,21 @@ definitions:
         description: |
           Only used for base oscillations of type 'sawtooth'.
           Sets the new width of the sawtooth wave in this anomaly subsequence.
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
+      min_window_ptp:
+        type: number
+        description: Minimum local peak-to-peak scale used by adaptive pattern templates.
+      adaptive_blend:
+        type: boolean
+        description: Whether to increase blend strength when a sampled pattern is weak.
+      blend_strength:
+        type: number
+        description: Multiplier applied to the pattern-template delta.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
     additionalProperties: false
   pattern-shift-params:
     required:
@@ -183,6 +216,13 @@ definitions:
       transition_window:
         type: integer
         description: Number of points to the left and right used to interpolate a smooth transition.
+      crossfade_mode:
+        type: string
+        enum: [linear, cosine]
+        description: Crossfade shape used at event boundaries.
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
     additionalProperties: false
   platform-params:
     required:
@@ -194,6 +234,12 @@ definitions:
       value:
         type: number
         description: Value of the platform on the y axis.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
     additionalProperties: false
   shared-factor-break-params:
     required:
@@ -218,6 +264,12 @@ definitions:
       variance:
         type: number
         description: Value of the new variance.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
     additionalProperties: false
   amplitude-params:
     required:
@@ -229,6 +281,19 @@ definitions:
       amplitude_factor:
         type: number
         description: Relative change of the amplitude.
+      transition_length:
+        type: integer
+        description: Boundary-safe blend width used at event edges.
+      center_mode:
+        type: string
+        enum: [zero, origin, mean, constant, median, robust, linear, quadratic, poly2]
+        description: Local centerline used as the neutral baseline for amplitude scaling.
+      min_effect_delta:
+        type: number
+        description: Minimum absolute pointwise effect enforced inside the event support.
+      min_residual_scale:
+        type: number
+        description: Minimum residual scale needed before amplitude min-effect enforcement is allowed.
     additionalProperties: false
   mode-correlation-params:
     required:

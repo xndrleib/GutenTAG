@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 
@@ -47,7 +47,16 @@ def _latent_shared_noise_attrs(
     )
     mean = float(getattr(bo, "_noise_mean"))
     shared_weight = float(getattr(bo, "_shared_noise_weight"))
-    residual_weight = float(getattr(bo, "_residual_noise_weight", np.sqrt(max(0.0, 1.0 - shared_weight**2))))
+    residual_weight_raw = getattr(
+        bo,
+        "_residual_noise_weight",
+        np.sqrt(max(0.0, 1.0 - shared_weight**2)),
+    )
+    residual_weight = float(
+        residual_weight_raw
+        if residual_weight_raw is not None
+        else np.sqrt(max(0.0, 1.0 - shared_weight**2))
+    )
     return idio, shared, mean, shared_weight, residual_weight
 
 
@@ -67,7 +76,9 @@ def _effective_relation_target(
         return None
     kind = str(bo.get_base_oscillation_kind())
     if kind == "shared-noise-sine":
-        return float(np.sign(target_correlation) * max(abs(float(target_correlation)), 0.92))
+        return float(
+            np.sign(target_correlation) * max(abs(float(target_correlation)), 0.92)
+        )
     return float(target_correlation)
 
 
@@ -78,7 +89,9 @@ def _effective_coupling_strength(
 ) -> float:
     kind = str(bo.get_base_oscillation_kind())
     if kind == "shared-noise-sine":
-        return float(np.sign(coupling_strength) * max(abs(float(coupling_strength)), 0.95))
+        return float(
+            np.sign(coupling_strength) * max(abs(float(coupling_strength)), 0.95)
+        )
     return float(coupling_strength)
 
 
@@ -241,7 +254,9 @@ def _apply_mode_correlation_group(
             target_observed=-1.0 * before_windows[int(channel)],
         )
 
-    mode_change_aligned = bool(group_segments[0].attrs.get("mode_change_aligned", False))
+    mode_change_aligned = bool(
+        group_segments[0].attrs.get("mode_change_aligned", False)
+    )
     events: List[Dict[str, Any]] = []
     for channel in flipped_channels:
         segment_idx = int(segment_idx_by_channel[int(channel)])
@@ -273,7 +288,9 @@ def _apply_mode_correlation_group(
                 anomaly_object="relation_sign_flip",
                 channel_visible=False,
                 purity_hint="relation_change",
-                params=runtime.to_builtin(anomaly_parameters_per_segment[int(segment_idx)]),
+                params=runtime.to_builtin(
+                    anomaly_parameters_per_segment[int(segment_idx)]
+                ),
                 source_start=int(source_start),
                 source_end=int(source_end),
                 extra={
@@ -311,11 +328,6 @@ def _apply_correlation_flip_group(
     if source_end <= source_start or len(group_channels) < 2:
         return []
     anchor_channel = int(group_channels[0])
-    all_have_latent = all(
-        _latent_shared_noise_attrs(channel_bos[int(ch)], source_start, source_end)
-        is not None
-        for ch in group_channels
-    )
     target_channels = [int(ch) for ch in group_channels[1:]]
     anchor_window = runtime.compose_window(
         base=base,
@@ -345,13 +357,15 @@ def _apply_correlation_flip_group(
             start=source_start,
             end=source_end,
         )
-        latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
+        latent = _latent_shared_noise_attrs(
+            channel_bos[int(channel)], source_start, source_end
+        )
         injection_level = "observed_window"
         effective_target_correlation = _effective_relation_target(
             bo=channel_bos[int(channel)],
             target_correlation=target_correlation,
         )
-        if latent is not None and target_correlation is not None:
+        if latent is not None and effective_target_correlation is not None:
             idio, shared, noise_mean, current_shared_weight, _ = latent
             candidate_noise = mixed_shared_noise_window_from_components(
                 idiosyncratic_component=idio,
@@ -500,7 +514,9 @@ def _apply_covariance_change_group(
             start=source_start,
             end=source_end,
         )
-        latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
+        latent = _latent_shared_noise_attrs(
+            channel_bos[int(channel)], source_start, source_end
+        )
         injection_level = "observed_window"
         effective_coupling_strength = _effective_coupling_strength(
             bo=channel_bos[int(channel)],
@@ -628,7 +644,9 @@ def _apply_channel_rewiring_group(
         return []
     first_channel = int(group_channels[0])
     second_channel = int(group_channels[1])
-    first_params = anomaly_parameters_per_segment[int(segment_idx_by_channel[first_channel])]
+    first_params = anomaly_parameters_per_segment[
+        int(segment_idx_by_channel[first_channel])
+    ]
     transition_length = int(first_params.get("transition_length", 8))
     rotation_degrees = float(first_params.get("rotation_degrees", 25.0))
     before_first = runtime.compose_window(
@@ -745,7 +763,9 @@ def _apply_channel_rewiring_group(
                     if injection_level == "noise"
                     else "not_pure_local"
                 ),
-                params=runtime.to_builtin(anomaly_parameters_per_segment[int(segment_idx)]),
+                params=runtime.to_builtin(
+                    anomaly_parameters_per_segment[int(segment_idx)]
+                ),
                 source_start=int(source_start),
                 source_end=int(source_end),
                 extra={
@@ -901,7 +921,9 @@ def _apply_shared_factor_break_group(
             start=source_start,
             end=source_end,
         )
-        latent = _latent_shared_noise_attrs(channel_bos[int(channel)], source_start, source_end)
+        latent = _latent_shared_noise_attrs(
+            channel_bos[int(channel)], source_start, source_end
+        )
         injection_level = "observed_window"
         if latent is not None:
             idio, shared, noise_mean, current_shared_weight, _ = latent
