@@ -2,7 +2,8 @@
 
 ## Add-Ons
 
-GutenTAG has a simple add-on feature which can be activated by using the [CLI](usage#from-cli).
+GutenTAG has a simple add-on feature which can be activated by using the
+[CLI](usage.md#from-cli).
 
 ### Definition
 

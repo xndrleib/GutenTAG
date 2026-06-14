@@ -71,7 +71,13 @@ A GutenTAG time series consists of a single (univariate) or multiple (multivaria
 
 ## Documentation
 
-GutenTAG's documentation can be found [here](doc/index.md).
+GutenTAG's package documentation can be found [here](doc/index.md).
+
+This `synth-gen` branch also adds paired dataset generation, v12 metadata
+registries, annotation channels, and capability analysis. The canonical
+`synth-gen` documentation starts at [../docs/index.md](../docs/index.md); the
+capability layer is summarized in
+[../docs/architecture/capability-layer.md](../docs/architecture/capability-layer.md).
 
 ## Citation
 

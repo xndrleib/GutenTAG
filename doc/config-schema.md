@@ -1,7 +1,10 @@
 # GutenTAG generation configuration schema
 
-GutenTAG comes with YAML/JSON schema definitions for the generation configuration files (such as [`example-config.yaml`](../generation_configs/example-config.yaml)).
-You can find the schema definitions in the folder [`gutenTAG/config/schema/'](./gutenTAG/config/schema).
+GutenTAG comes with YAML/JSON schema definitions for the generation
+configuration files (such as
+[`example-config.yaml`](../generation_configs/example-config.yaml)).
+You can find the schema definitions in the folder
+[`gutenTAG/config/schema/`](../gutenTAG/config/schema).
 
 The schema can be used to enhance IDEs and editors with syntax highlighting, code completion, and linting features for the GutenTAG configuration files.
 

@@ -12,3 +12,5 @@ A good **T**imeseries **A**nomaly **G**enerator.
   - [Configuration Schema](config-schema.md) (IDE support for GutenTAG generation configuration files)
 - [Advanced Features](advanced-features.md)
   - [Add-Ons](advanced-features.md#add-ons)
+- [synth-gen Documentation](../../docs/index.md)
+  - [Capability Layer](../../docs/architecture/capability-layer.md)

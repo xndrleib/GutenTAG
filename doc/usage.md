@@ -119,11 +119,10 @@ df.iloc[:, 1:-1]
 df[LABEL_COLUMN_NAME]
 ```
 
-Alternatively, you can generate time series data by calling the generation function of a base oscillation directly:
-
-> **Attention**
->
-> The Python API for injecting anomalies is still work in progress (WIP)!
+Alternatively, you can generate clean time series data by calling the generation
+function of a base oscillation directly. Direct anomaly injection is not part of
+this public helper API; use the configuration-dict workflow above when
+anomalies are required.
 
 ```python
 import pandas as pd
@@ -133,8 +132,6 @@ import matplotlib.pyplot as plt
 N = 500
 ts_sine = gt.sine(length=N, frequency=2, amplitude=1.8)
 ts_dirichlet = gt.dirichlet(length=N)
-
-# anomaly injection TBD
 
 df = pd.DataFrame({"ch-0": ts_sine, "ch-1": ts_dirichlet})
 
