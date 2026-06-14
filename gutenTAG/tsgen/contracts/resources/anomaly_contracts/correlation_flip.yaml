@@ -1,0 +1,38 @@
+contract_id: synthgen.contract.correlation_flip.v1
+anomaly_type: correlation-flip
+intended_constraints:
+  - dependence.correlation
+canonical_witnesses:
+  - correlation_delta
+  - covariance_delta
+  - fisher_z_corr_shift
+  - target_from_others_regression_residual
+allowed_artifacts:
+  boundary.discontinuity: false
+  location.mean: false
+  scale.variance: false
+forbidden_shortcuts:
+  - location.mean
+  - scale.variance
+  - boundary.discontinuity
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior
+  boundary_primary_allowed: false
+channel_role_policy:
+  intervention_min: 1
+  context_min: 1
+  canonical_min_projection_size: 2
+realized_effect_schema:
+  - requested_target_correlation
+  - injection_level
+  - realized_corr_context
+  - realized_corr_clean_event
+  - realized_corr_anom_event
+  - realized_fisher_shift
+  - marginal_shift_target
+  - marginal_shift_anchor
+admission_policy:
+  require_canonical_witness: true
+  allow_shortcut_but_downgrade_claim: true
+  require_realized_effect: true

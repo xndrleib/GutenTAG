@@ -100,8 +100,8 @@ class TestV11Contracts(unittest.TestCase):
             ],
         )
         self.assertEqual(int(masks.labels_any[:, 0].sum()), 5)
-        self.assertEqual(int(masks.labels_affected[:, 3].sum()), 5)
-        self.assertEqual(int(masks.labels_affected[:, 0].sum()), 0)
+        self.assertEqual(int(masks.labels_intervention[:, 3].sum()), 5)
+        self.assertEqual(int(masks.labels_intervention[:, 0].sum()), 0)
         self.assertEqual(int(masks.labels_context[:, 0].sum()), 5)
         self.assertEqual(int(masks.labels_context[:, 3].sum()), 5)
 

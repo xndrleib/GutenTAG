@@ -95,6 +95,11 @@ def _effective_coupling_strength(
     return float(coupling_strength)
 
 
+def _prefer_observed_relation_rewrite(bo: Any) -> bool:
+    kind = str(bo.get_base_oscillation_kind())
+    return kind == "shared-noise-sine"
+
+
 def apply_group_anomaly(
     *,
     anomaly_type: str,
@@ -245,18 +250,35 @@ def _apply_mode_correlation_group(
         for channel in flipped_channels
     }
     for channel in flipped_channels:
-        runtime.replace_window(
-            base=base,
-            bo=channel_bos[int(channel)],
-            channel=int(channel),
-            start=source_start,
-            end=source_end,
-            target_observed=-1.0 * before_windows[int(channel)],
+        base[source_start:source_end, int(channel)] = (
+            -1.0
+            * np.asarray(
+                base[source_start:source_end, int(channel)],
+                dtype=np.float64,
+            )
         )
 
     mode_change_aligned = bool(
         group_segments[0].attrs.get("mode_change_aligned", False)
     )
+    segment_attrs = group_segments[0].attrs
+    mode_grid_aligned = bool(segment_attrs.get("mode_grid_aligned", False))
+    support_independent = bool(
+        segment_attrs.get(
+            "support_independent_of_realized_mode_state", False
+        )
+    )
+    mode_grid_metadata = {
+        key: int(segment_attrs[key])
+        for key in (
+            "mode_grid_block_size",
+            "mode_grid_start_block",
+            "mode_grid_end_block",
+            "mode_grid_block_length",
+            "mode_grid_min_gap_blocks",
+        )
+        if key in segment_attrs
+    }
     events: List[Dict[str, Any]] = []
     for channel in flipped_channels:
         segment_idx = int(segment_idx_by_channel[int(channel)])
@@ -284,7 +306,7 @@ def _apply_mode_correlation_group(
                 anomaly_type=anomaly_type,
                 group_id=int(group_id),
                 group_channels=[int(ch) for ch in group_channels],
-                affected_channels=[int(ch) for ch in flipped_channels],
+                intervention_channels=[int(ch) for ch in flipped_channels],
                 anomaly_object="relation_sign_flip",
                 channel_visible=False,
                 purity_hint="relation_change",
@@ -297,6 +319,12 @@ def _apply_mode_correlation_group(
                     "anchor_channel": int(anchor_channel),
                     "flipped_channels": [int(ch) for ch in flipped_channels],
                     "mode_change_aligned": bool(mode_change_aligned),
+                    "mode_grid_aligned": bool(mode_grid_aligned),
+                    "support_independent_of_realized_mode_state": bool(
+                        support_independent
+                    ),
+                    "latent_mode_flip": True,
+                    **mode_grid_metadata,
                 },
             )
         )
@@ -365,7 +393,11 @@ def _apply_correlation_flip_group(
             bo=channel_bos[int(channel)],
             target_correlation=target_correlation,
         )
-        if latent is not None and effective_target_correlation is not None:
+        if (
+            latent is not None
+            and effective_target_correlation is not None
+            and not _prefer_observed_relation_rewrite(channel_bos[int(channel)])
+        ):
             idio, shared, noise_mean, current_shared_weight, _ = latent
             candidate_noise = mixed_shared_noise_window_from_components(
                 idiosyncratic_component=idio,
@@ -440,7 +472,7 @@ def _apply_correlation_flip_group(
                 anomaly_type=anomaly_type,
                 group_id=int(group_id),
                 group_channels=[int(ch) for ch in group_channels],
-                affected_channels=[int(ch) for ch in target_channels],
+                intervention_channels=[int(ch) for ch in target_channels],
                 anomaly_object="pair_correlation_flip",
                 channel_visible=False,
                 purity_hint=(
@@ -522,7 +554,7 @@ def _apply_covariance_change_group(
             bo=channel_bos[int(channel)],
             coupling_strength=coupling_strength,
         )
-        if latent is not None:
+        if latent is not None and not _prefer_observed_relation_rewrite(channel_bos[int(channel)]):
             idio, shared, noise_mean, _, _ = latent
             candidate_noise = shared_noise_window_from_components(
                 idiosyncratic_component=idio,
@@ -596,7 +628,7 @@ def _apply_covariance_change_group(
                 anomaly_type=anomaly_type,
                 group_id=int(group_id),
                 group_channels=[int(ch) for ch in group_channels],
-                affected_channels=[int(ch) for ch in target_channels],
+                intervention_channels=[int(ch) for ch in target_channels],
                 anomaly_object="shared_noise_coupling_change",
                 channel_visible=False,
                 purity_hint=(
@@ -755,7 +787,7 @@ def _apply_channel_rewiring_group(
                 anomaly_type=anomaly_type,
                 group_id=int(group_id),
                 group_channels=[int(ch) for ch in group_channels],
-                affected_channels=[int(first_channel), int(second_channel)],
+                intervention_channels=[int(first_channel), int(second_channel)],
                 anomaly_object="paired_structure_rotation",
                 channel_visible=(injection_level != "noise"),
                 purity_hint=(
@@ -859,7 +891,7 @@ def _apply_lag_synchronization_group(
                 anomaly_type=anomaly_type,
                 group_id=int(group_id),
                 group_channels=[int(ch) for ch in group_channels],
-                affected_channels=[int(ch) for ch in shifted_channels],
+                intervention_channels=[int(ch) for ch in shifted_channels],
                 anomaly_object="lag_synchronization_shift",
                 channel_visible=True,
                 purity_hint="not_pure_local",
@@ -990,7 +1022,7 @@ def _apply_shared_factor_break_group(
                 anomaly_type=anomaly_type,
                 group_id=int(group_id),
                 group_channels=[int(ch) for ch in group_channels],
-                affected_channels=[int(ch) for ch in target_channels],
+                intervention_channels=[int(ch) for ch in target_channels],
                 anomaly_object="shared_factor_break",
                 channel_visible=False,
                 purity_hint=(

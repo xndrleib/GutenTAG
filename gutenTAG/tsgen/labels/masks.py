@@ -12,10 +12,10 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class LabelMasks:
-    """Collection of v11 label masks derived from event-level truth."""
+    """Collection of label masks derived from event-level truth."""
 
     labels_any: np.ndarray
-    labels_affected: np.ndarray
+    labels_intervention: np.ndarray
     labels_context: np.ndarray
 
 
@@ -25,14 +25,14 @@ def build_label_masks(
     channels: int,
     events: Sequence[Mapping[str, Any]],
 ) -> LabelMasks:
-    """Build target-agnostic v11 label masks from events.
+    """Build target-agnostic label masks from events.
 
-    ``labels_affected`` follows operator targets/perturbed channels. For
+    ``labels_intervention`` follows operator targets/perturbed channels. For
     relation-only anomalies this is not necessarily the final supervised target;
     ``labels_context`` records the channels needed to interpret the event.
     """
     labels_any = np.zeros((int(length), 1), dtype=np.int8)
-    labels_affected = np.zeros((int(length), int(channels)), dtype=np.int8)
+    labels_intervention = np.zeros((int(length), int(channels)), dtype=np.int8)
     labels_context = np.zeros((int(length), int(channels)), dtype=np.int8)
     for event in events:
         start = _clip_index(event.get("start", 0), length)
@@ -40,9 +40,9 @@ def build_label_masks(
         if end <= start:
             continue
         labels_any[start:end, 0] = 1
-        affected_channels = _event_channels(
+        intervention_channels = _event_channels(
             event,
-            preferred_keys=("operator_target_channels", "affected_channels", "channel"),
+            preferred_keys=("operator_target_channels", "intervention_channels", "channel"),
         )
         context_channels = _event_channels(
             event,
@@ -53,26 +53,26 @@ def build_label_masks(
                 "channel",
             ),
         )
-        for channel in affected_channels:
+        for channel in intervention_channels:
             if 0 <= channel < channels:
-                labels_affected[start:end, channel] = 1
+                labels_intervention[start:end, channel] = 1
         for channel in context_channels:
             if 0 <= channel < channels:
                 labels_context[start:end, channel] = 1
     return LabelMasks(
         labels_any=labels_any,
-        labels_affected=labels_affected,
+        labels_intervention=labels_intervention,
         labels_context=labels_context,
     )
 
 
 def write_label_masks(path: Path, masks: LabelMasks) -> None:
-    """Write v11 label masks next to legacy labels."""
+    """Write event-derived label masks next to generated instance artifacts."""
     _write_label_csv(path / "labels_any.csv", masks.labels_any, ["label_any"])
     _write_label_csv(
-        path / "labels_affected.csv",
-        masks.labels_affected,
-        [f"label-{i}" for i in range(masks.labels_affected.shape[1])],
+        path / "labels_intervention.csv",
+        masks.labels_intervention,
+        [f"label-{i}" for i in range(masks.labels_intervention.shape[1])],
     )
     _write_label_csv(
         path / "labels_context.csv",

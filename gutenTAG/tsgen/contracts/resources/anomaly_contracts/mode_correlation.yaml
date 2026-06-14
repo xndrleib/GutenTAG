@@ -1,0 +1,37 @@
+contract_id: synthgen.contract.mode_correlation.v1
+anomaly_type: mode-correlation
+intended_constraints:
+  - dependence.collective_factor
+  - regime.mode_alignment
+canonical_witnesses:
+  - target_vs_ensemble_corr_shift
+  - pca_reconstruction_error
+  - target_from_others_regression_residual
+  - mode_state_agreement
+allowed_artifacts:
+  boundary.discontinuity: conditional
+  location.mean: false
+  scale.variance: false
+forbidden_shortcuts:
+  - location.mean
+  - scale.variance
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior_or_mode_state
+  boundary_primary_allowed: false
+channel_role_policy:
+  intervention_min: 1
+  context_min: 2
+  canonical_min_projection_size: 2
+realized_effect_schema:
+  - clean_mode_agreement
+  - anomalous_mode_agreement
+  - target_vs_ensemble_corr_context
+  - target_vs_ensemble_corr_event
+  - pca_residual_ratio
+  - regression_residual_ratio
+  - boundary_jump_score
+admission_policy:
+  require_collective_witness: true
+  pair_relation_only_is_downgrade: true
+  require_realized_effect: true

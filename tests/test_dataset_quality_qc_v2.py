@@ -44,7 +44,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             places=6,
         )
 
-    def test_qc_v2_channel_role_distinguishes_primary_affected_and_context(
+    def test_qc_v2_channel_role_distinguishes_primary_intervention_and_context(
         self,
     ) -> None:
         module = _load_qc_module()
@@ -52,7 +52,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             module.classify_group_channel_role(
                 channel=1,
                 primary_channels={1},
-                affected_channels={1, 2},
+                intervention_channels={1, 2},
             ),
             "primary_event_channel",
         )
@@ -60,15 +60,15 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             module.classify_group_channel_role(
                 channel=2,
                 primary_channels={1},
-                affected_channels={1, 2},
+                intervention_channels={1, 2},
             ),
-            "affected_channel",
+            "intervention_channel",
         )
         self.assertEqual(
             module.classify_group_channel_role(
                 channel=3,
                 primary_channels={1},
-                affected_channels={1, 2},
+                intervention_channels={1, 2},
             ),
             "context_channel",
         )
@@ -97,7 +97,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
         )
         self.assertEqual(semantic_family, "point_univariate")
 
-    def test_qc_v2_relation_only_policy_uses_affected_channel_shortcut(self) -> None:
+    def test_qc_v2_relation_only_policy_uses_intervention_channel_shortcut(self) -> None:
         module = _load_qc_module()
         thresholds = module.QCThresholds()
         passed, reason = module.evaluate_semantic_policy(
@@ -108,14 +108,14 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=0.95,
             far_field_out_ratio_l2=0.01,
             uni_detector_max=1.25,
-            uni_detector_affected_max=1.25,
+            uni_detector_intervention_max=1.25,
             uni_detector_context_max=0.65,
             multi_detector_max=0.70,
             detector_preference_margin=0.10,
             thresholds=thresholds,
         )
         self.assertFalse(passed)
-        self.assertEqual(reason, "uni_shortcut_affected")
+        self.assertEqual(reason, "uni_shortcut_intervention")
 
         passed, reason = module.evaluate_semantic_policy(
             semantic_family="relation_only_multivariate",
@@ -125,7 +125,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=0.95,
             far_field_out_ratio_l2=0.01,
             uni_detector_max=1.12,
-            uni_detector_affected_max=1.12,
+            uni_detector_intervention_max=1.12,
             uni_detector_context_max=0.65,
             multi_detector_max=1.40,
             detector_preference_margin=0.28,
@@ -142,7 +142,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=0.95,
             far_field_out_ratio_l2=0.01,
             uni_detector_max=1.25,
-            uni_detector_affected_max=0.95,
+            uni_detector_intervention_max=0.95,
             uni_detector_context_max=1.60,
             multi_detector_max=0.70,
             detector_preference_margin=0.10,
@@ -159,7 +159,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=0.95,
             far_field_out_ratio_l2=0.01,
             uni_detector_max=1.15,
-            uni_detector_affected_max=0.95,
+            uni_detector_intervention_max=0.95,
             uni_detector_context_max=1.15,
             multi_detector_max=0.70,
             detector_preference_margin=0.10,
@@ -186,7 +186,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=0.95,
             far_field_out_ratio_l2=0.01,
             uni_detector_max=0.10,
-            uni_detector_affected_max=0.10,
+            uni_detector_intervention_max=0.10,
             uni_detector_context_max=0.10,
             multi_detector_max=0.10,
             detector_preference_margin=0.0,
@@ -203,7 +203,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=0.95,
             far_field_out_ratio_l2=0.40,
             uni_detector_max=0.50,
-            uni_detector_affected_max=0.50,
+            uni_detector_intervention_max=0.50,
             uni_detector_context_max=0.10,
             multi_detector_max=0.10,
             detector_preference_margin=0.0,
@@ -222,7 +222,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             edge_peak_ratio=0.3,
             visual_artifact_score=0.1,
             uni_detector_max=0.72,
-            uni_detector_affected_max=0.72,
+            uni_detector_intervention_max=0.72,
             multi_detector_max=0.62,
             detector_preference_margin=-0.08,
             thresholds=thresholds,
@@ -241,7 +241,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             edge_peak_ratio=0.0,
             visual_artifact_score=11.0,
             uni_detector_max=1.10,
-            uni_detector_affected_max=1.10,
+            uni_detector_intervention_max=1.10,
             multi_detector_max=float("nan"),
             detector_preference_margin=float("nan"),
             thresholds=thresholds,
@@ -255,7 +255,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             effect_inside_share_l1=1.0,
             far_field_out_ratio_l2=0.0,
             uni_detector_max=1.10,
-            uni_detector_affected_max=1.10,
+            uni_detector_intervention_max=1.10,
             uni_detector_context_max=0.0,
             multi_detector_max=float("nan"),
             detector_preference_margin=float("nan"),
@@ -278,7 +278,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.18,
                     "visual_artifact_score": 0.1,
                     "uni_detector_max": 0.90,
-                    "uni_detector_affected_max": 0.90,
+                    "uni_detector_intervention_max": 0.90,
                     "multi_detector_max": 0.10,
                     "detector_preference_margin": -0.80,
                 },
@@ -289,7 +289,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 0.96,
                     "far_field_out_ratio_l2": 0.02,
                     "uni_detector_max": 0.90,
-                    "uni_detector_affected_max": 0.90,
+                    "uni_detector_intervention_max": 0.90,
                     "uni_detector_context_max": 0.10,
                     "multi_detector_max": 0.10,
                     "detector_preference_margin": -0.80,
@@ -311,7 +311,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.15,
                     "visual_artifact_score": 0.1,
                     "uni_detector_max": 0.40,
-                    "uni_detector_affected_max": 0.40,
+                    "uni_detector_intervention_max": 0.40,
                     "multi_detector_max": 0.75,
                     "detector_preference_margin": 0.25,
                 },
@@ -322,7 +322,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 0.95,
                     "far_field_out_ratio_l2": 0.02,
                     "uni_detector_max": 0.40,
-                    "uni_detector_affected_max": 0.40,
+                    "uni_detector_intervention_max": 0.40,
                     "uni_detector_context_max": 0.35,
                     "multi_detector_max": 0.75,
                     "detector_preference_margin": 0.25,
@@ -335,7 +335,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                 "expected_difficulty": "medium",
             },
             {
-                "name": "relation_only_affected_shortcut",
+                "name": "relation_only_intervention_shortcut",
                 "semantic_family": "relation_only_multivariate",
                 "bucket_inputs": {
                     "semantic_family": "relation_only_multivariate",
@@ -344,7 +344,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.22,
                     "visual_artifact_score": 0.1,
                     "uni_detector_max": 1.25,
-                    "uni_detector_affected_max": 1.25,
+                    "uni_detector_intervention_max": 1.25,
                     "multi_detector_max": 0.72,
                     "detector_preference_margin": -0.20,
                 },
@@ -355,7 +355,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 0.94,
                     "far_field_out_ratio_l2": 0.02,
                     "uni_detector_max": 1.25,
-                    "uni_detector_affected_max": 1.25,
+                    "uni_detector_intervention_max": 1.25,
                     "uni_detector_context_max": 0.45,
                     "multi_detector_max": 0.72,
                     "detector_preference_margin": -0.20,
@@ -363,7 +363,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                 "peak_rz": 4.0,
                 "expected_bucket": "channel_visible",
                 "expected_pass": False,
-                "expected_failure_reason": "uni_shortcut_affected",
+                "expected_failure_reason": "uni_shortcut_intervention",
                 "expected_warning_reason": "none",
                 "expected_difficulty": "borderline",
             },
@@ -377,7 +377,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.22,
                     "visual_artifact_score": 0.1,
                     "uni_detector_max": 1.05,
-                    "uni_detector_affected_max": 0.85,
+                    "uni_detector_intervention_max": 0.85,
                     "multi_detector_max": 0.72,
                     "detector_preference_margin": 0.05,
                 },
@@ -388,7 +388,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 0.94,
                     "far_field_out_ratio_l2": 0.02,
                     "uni_detector_max": 1.05,
-                    "uni_detector_affected_max": 0.85,
+                    "uni_detector_intervention_max": 0.85,
                     "uni_detector_context_max": 1.15,
                     "multi_detector_max": 0.72,
                     "detector_preference_margin": 0.05,
@@ -410,7 +410,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.98,
                     "visual_artifact_score": 2.4,
                     "uni_detector_max": 0.80,
-                    "uni_detector_affected_max": 0.80,
+                    "uni_detector_intervention_max": 0.80,
                     "multi_detector_max": 0.10,
                     "detector_preference_margin": -0.70,
                 },
@@ -421,7 +421,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 0.94,
                     "far_field_out_ratio_l2": 0.02,
                     "uni_detector_max": 0.80,
-                    "uni_detector_affected_max": 0.80,
+                    "uni_detector_intervention_max": 0.80,
                     "uni_detector_context_max": 0.10,
                     "multi_detector_max": 0.10,
                     "detector_preference_margin": -0.70,
@@ -443,7 +443,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.0,
                     "visual_artifact_score": 0.0,
                     "uni_detector_max": 0.0,
-                    "uni_detector_affected_max": 0.0,
+                    "uni_detector_intervention_max": 0.0,
                     "multi_detector_max": 0.0,
                     "detector_preference_margin": 0.0,
                 },
@@ -454,7 +454,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 1.0,
                     "far_field_out_ratio_l2": 0.0,
                     "uni_detector_max": 0.0,
-                    "uni_detector_affected_max": 0.0,
+                    "uni_detector_intervention_max": 0.0,
                     "uni_detector_context_max": 0.0,
                     "multi_detector_max": 0.0,
                     "detector_preference_margin": 0.0,
@@ -476,7 +476,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "edge_peak_ratio": 0.20,
                     "visual_artifact_score": 0.1,
                     "uni_detector_max": 0.50,
-                    "uni_detector_affected_max": 0.50,
+                    "uni_detector_intervention_max": 0.50,
                     "multi_detector_max": 0.10,
                     "detector_preference_margin": -0.40,
                 },
@@ -487,7 +487,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
                     "effect_inside_share_l1": 0.94,
                     "far_field_out_ratio_l2": 0.40,
                     "uni_detector_max": 0.50,
-                    "uni_detector_affected_max": 0.50,
+                    "uni_detector_intervention_max": 0.50,
                     "uni_detector_context_max": 0.10,
                     "multi_detector_max": 0.10,
                     "detector_preference_margin": -0.40,
@@ -670,7 +670,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             self.assertIn("uni_detector_raw_max", group_metrics.columns)
             self.assertIn("multi_detector_raw_max", group_metrics.columns)
             self.assertIn("uni_detector_primary_max", group_metrics.columns)
-            self.assertIn("uni_detector_affected_max", group_metrics.columns)
+            self.assertIn("uni_detector_intervention_max", group_metrics.columns)
             self.assertIn("uni_detector_context_max", group_metrics.columns)
             self.assertIn("effect_center_of_mass_relative", group_metrics.columns)
             self.assertIn("effect_center_offset_from_midpoint", group_metrics.columns)
@@ -705,7 +705,7 @@ class TestDatasetQualityQCV2(unittest.TestCase):
             )
             self.assertTrue(
                 group_channel_metrics["channel_role"]
-                .isin(["primary_event_channel", "affected_channel", "context_channel"])
+                .isin(["primary_event_channel", "intervention_channel", "context_channel"])
                 .all()
             )
 

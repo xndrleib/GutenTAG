@@ -1,0 +1,26 @@
+contract_id: synthgen.contract.platform.v1
+anomaly_type: platform
+intended_constraints:
+  - shape.platform
+canonical_witnesses:
+  - shape_residual
+  - mean_delta
+  - energy_delta
+allowed_artifacts:
+  boundary.discontinuity: true
+forbidden_shortcuts: []
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior_or_boundary
+  boundary_primary_allowed: true
+channel_role_policy:
+  intervention_min: 1
+  context_min: 0
+  canonical_min_projection_size: 1
+realized_effect_schema:
+  - plateau_level
+  - transition_energy
+  - boundary_jump_score
+admission_policy:
+  require_canonical_witness: true
+  require_realized_effect: true

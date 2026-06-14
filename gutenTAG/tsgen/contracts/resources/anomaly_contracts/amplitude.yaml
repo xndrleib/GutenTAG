@@ -1,0 +1,27 @@
+contract_id: synthgen.contract.amplitude.v1
+anomaly_type: amplitude
+intended_constraints:
+  - scale.amplitude
+canonical_witnesses:
+  - energy_delta
+  - variance_delta
+  - shape_residual
+allowed_artifacts:
+  boundary.discontinuity: false
+forbidden_shortcuts:
+  - boundary.discontinuity
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior
+  boundary_primary_allowed: false
+channel_role_policy:
+  intervention_min: 1
+  context_min: 0
+  canonical_min_projection_size: 1
+realized_effect_schema:
+  - requested_amplitude_factor
+  - realized_energy_ratio
+  - realized_variance_ratio
+admission_policy:
+  require_canonical_witness: true
+  require_realized_effect: true

@@ -1,0 +1,27 @@
+contract_id: synthgen.contract.mean.v1
+anomaly_type: mean
+intended_constraints:
+  - location.mean
+canonical_witnesses:
+  - mean_delta
+  - energy_delta
+allowed_artifacts:
+  boundary.discontinuity: false
+  scale.variance: false
+forbidden_shortcuts:
+  - boundary.discontinuity
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior
+  boundary_primary_allowed: false
+channel_role_policy:
+  intervention_min: 1
+  context_min: 0
+  canonical_min_projection_size: 1
+realized_effect_schema:
+  - requested_shift
+  - realized_offset
+  - realized_standardized_offset
+admission_policy:
+  require_canonical_witness: true
+  require_realized_effect: true

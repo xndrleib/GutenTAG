@@ -100,8 +100,18 @@ def _is_generated_csv(path: Path) -> bool:
         "anomalous.csv",
         "labels_pointwise.csv",
         "labels_any.csv",
-        "labels_affected.csv",
+        "labels_intervention.csv",
         "labels_context.csv",
+        "labels_oracle_any.csv",
+        "labels_oracle_intervention.csv",
+        "labels_oracle_context.csv",
+        "labels_event_only.csv",
+        "labels_delayed.csv",
+        "labels_weak_point.csv",
+        "labels_visible_only.csv",
+        "labels_noisy_boundary.csv",
+        "labels_censored.csv",
+        "law_level_replicates.csv",
     }
 
 

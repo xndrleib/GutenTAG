@@ -41,6 +41,7 @@ from .tsgen.config import (
     validate_name_selections,
     validate_raw_ts_config,
 )
+from .tsgen.contracts import write_v12_metadata_registries
 from .tsgen.environment import validate_release_backend_policy
 from .tsgen.io import sanitize_json_value, write_json
 from .tsgen.labels import build_label_masks, write_label_masks
@@ -50,6 +51,7 @@ from .tsgen.manifest import (
     hash_generated_csv,
     resolve_git_metadata,
 )
+from .tsgen.sidecars import write_v12_generator_sidecars
 from .tsgen.signal_ops import local_centerline, robust_scale
 from .utils.compatibility import Compatibility
 from .utils.global_variables import PARAMETERS
@@ -242,10 +244,12 @@ class TSGeneratorConfig:
 
     output_root: Path
     master_seed: int
+    dataset_version: str = "ts_dataset_v12"
     length: int = 10_000
     channels: int = 5
     splits: Tuple[str, ...] = DEFAULT_SPLITS
     instances_per_split: int = 5
+    split_instance_counts: Dict[str, Dict[str, int]] = field(default_factory=dict)
     density_range: Tuple[float, float] = DEFAULT_DENSITY_RANGE
     density_tolerance: float = 0.002
     segment_count_range: Tuple[int, int] = DEFAULT_SEGMENT_COUNT_RANGE
@@ -291,6 +295,8 @@ class TSGeneratorConfig:
     support_eps_mode: str = "relative"
     support_eps_value: float = 0.05
     min_effective_label_length_non_extremum: int = 1
+    annotation_channels: Dict[str, Any] = field(default_factory=dict)
+    law_level_replicates: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, config: Mapping[str, Any]) -> TSGeneratorConfig:
@@ -313,6 +319,8 @@ class TSGeneratorConfig:
         anomaly_cfg = _read_nested_dict(config, "anomaly_policy")
         plot_cfg = _read_nested_dict(config, "plot")
         io_cfg = _read_nested_dict(config, "io")
+        annotation_channels_cfg = _read_nested_dict(config, "annotation_channels")
+        law_level_replicates_cfg = _read_nested_dict(config, "law_level_replicates")
 
         density_range_raw = anomaly_cfg.get(
             "density_range",
@@ -360,6 +368,16 @@ class TSGeneratorConfig:
             anomaly_cfg.get("segment_planner", config.get("segment_planner", {}))
         )
 
+        raw_splits = dataset_cfg.get("splits", config.get("splits", list(DEFAULT_SPLITS)))
+        legacy_instances_per_split = int(
+            dataset_cfg.get(
+                "instances_per_split", config.get("instances_per_split", 5)
+            )
+        )
+        split_instance_counts = _parse_split_instance_counts(
+            raw_splits,
+            legacy_instances_per_split,
+        )
         ts_config = cls(
             output_root=Path(
                 generator_cfg.get(
@@ -369,16 +387,12 @@ class TSGeneratorConfig:
             master_seed=int(
                 generator_cfg.get("master_seed", config.get("master_seed", 42))
             ),
+            dataset_version=str(config.get("dataset_version", "ts_dataset_v12")),
             length=int(dataset_cfg.get("length", config.get("length", 10_000))),
             channels=int(dataset_cfg.get("channels", config.get("channels", 5))),
-            splits=tuple(
-                dataset_cfg.get("splits", config.get("splits", list(DEFAULT_SPLITS)))
-            ),
-            instances_per_split=int(
-                dataset_cfg.get(
-                    "instances_per_split", config.get("instances_per_split", 5)
-                )
-            ),
+            splits=tuple(split_instance_counts.keys()),
+            instances_per_split=legacy_instances_per_split,
+            split_instance_counts=split_instance_counts,
             density_range=(float(density_range[0]), float(density_range[1])),
             density_tolerance=float(
                 anomaly_cfg.get(
@@ -575,6 +589,8 @@ class TSGeneratorConfig:
                     config.get("min_effective_label_length_non_extremum", 1),
                 )
             ),
+            annotation_channels=copy.deepcopy(dict(annotation_channels_cfg)),
+            law_level_replicates=copy.deepcopy(dict(law_level_replicates_cfg)),
         )
         ts_config.validate()
         return ts_config
@@ -597,6 +613,24 @@ class TSGeneratorConfig:
             raise ValueError("dataset.splits must contain at least one split name")
         if len(set(self.splits)) != len(self.splits):
             raise ValueError("dataset.splits must not contain duplicate split names")
+        if not self.split_instance_counts:
+            self.split_instance_counts = {
+                split: {
+                    "paired_instances_per_variant": int(self.instances_per_split),
+                    "clean_only_instances_per_variant": 0,
+                }
+                for split in self.splits
+            }
+        for split in self.splits:
+            if split not in self.split_instance_counts:
+                raise ValueError(f"dataset.splits is missing count config for split {split!r}")
+            counts = self.split_instance_counts[split]
+            paired_count = int(counts.get("paired_instances_per_variant", 0))
+            clean_only_count = int(counts.get("clean_only_instances_per_variant", 0))
+            if paired_count < 0 or clean_only_count < 0:
+                raise ValueError("split instance counts must be >= 0")
+            if paired_count + clean_only_count <= 0:
+                raise ValueError(f"split {split!r} must request at least one instance")
         if self.density_range[0] <= 0 or self.density_range[1] >= 1:
             raise ValueError("anomaly density_range must stay inside (0, 1)")
         if self.density_range[0] > self.density_range[1]:
@@ -731,11 +765,13 @@ class TSGeneratorConfig:
                 "energy_aware_segments",
                 "trend_parameter_aware_segments",
                 "mode_boundary_segments",
+                "mode_grid_segments",
             ):
                 raise ValueError(
                     "segment_planner planner must be one of "
                     "{'uniform_segments','point_events_from_density','period_locked_frequency',"
-                    "'energy_aware_segments','trend_parameter_aware_segments','mode_boundary_segments'}"
+                    "'energy_aware_segments','trend_parameter_aware_segments',"
+                    "'mode_boundary_segments','mode_grid_segments'}"
                 )
             if "density_range" in planner_cfg:
                 _parse_pair(
@@ -772,6 +808,32 @@ class TSGeneratorConfig:
             raise ValueError("min_effective_label_length_non_extremum must be >= 1")
         if self.max_placement_attempts <= 0:
             raise ValueError("max_placement_attempts must be > 0")
+        if not isinstance(self.annotation_channels, Mapping):
+            raise ValueError("annotation_channels must be a mapping")
+        raw_emit = self.annotation_channels.get("emit")
+        if raw_emit is not None and not isinstance(raw_emit, (list, tuple)):
+            raise ValueError("annotation_channels.emit must be a list")
+        if not isinstance(self.law_level_replicates, Mapping):
+            raise ValueError("law_level_replicates must be a mapping")
+        law_enabled = self.law_level_replicates.get("enabled")
+        if law_enabled is not None and not isinstance(law_enabled, bool):
+            raise ValueError("law_level_replicates.enabled must be boolean")
+        replicas_per_genotype = self.law_level_replicates.get("replicas_per_genotype")
+        if replicas_per_genotype is not None and int(replicas_per_genotype) <= 0:
+            raise ValueError("law_level_replicates.replicas_per_genotype must be > 0")
+        paired_seed_policy = str(
+            self.law_level_replicates.get(
+                "paired_seed_policy",
+                "same_base_parameters",
+            )
+        )
+        if paired_seed_policy != "same_base_parameters":
+            raise ValueError(
+                "law_level_replicates.paired_seed_policy must be 'same_base_parameters'"
+            )
+        output_split = str(self.law_level_replicates.get("output_split", "law_replicates"))
+        if not output_split:
+            raise ValueError("law_level_replicates.output_split must be non-empty")
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize this configuration to a JSON/YAML-safe dictionary."""
@@ -786,10 +848,12 @@ class TSGeneratorConfig:
                     "on_variant_failure": self.on_variant_failure,
                 },
                 "dataset": {
+                    "dataset_version": self.dataset_version,
                     "length": self.length,
                     "channels": self.channels,
                     "splits": list(self.splits),
                     "instances_per_split": self.instances_per_split,
+                    "split_instance_counts": self.split_instance_counts,
                 },
                 "anomaly_policy": {
                     "density_range": list(self.density_range),
@@ -840,6 +904,8 @@ class TSGeneratorConfig:
                     "zoom_fill_policy": self.zoom_fill_policy,
                 },
                 "io": {"csv_float_format": self.csv_float_format},
+                "annotation_channels": self.annotation_channels,
+                "law_level_replicates": self.law_level_replicates,
             }
         )
 
@@ -973,11 +1039,21 @@ class TSDatasetGenerator:
                 "Dataset generation produced no instances or no generated variants. "
                 "Fix the config or set generator.allow_empty_dataset=true for debug-only runs."
             )
+        metadata_registry = write_v12_metadata_registries(
+            output_root,
+            provenance="generated",
+        )
+        generator_sidecars = write_v12_generator_sidecars(
+            output_root,
+            annotation_channels=self.config.annotation_channels,
+            law_level_replicates=self.config.law_level_replicates,
+        )
         config_dict = self.config.to_dict()
         gutenTAG_git = resolve_git_metadata(Path(__file__).resolve().parents[2])
         artifacts = hash_generated_csv(output_root)
         manifest: Dict[str, Any] = {
             "dataset_schema_version": "synthgen.dataset.v1",
+            "dataset_version": self.config.dataset_version,
             "generator": {
                 "library_version": __version__,
                 "git": gutenTAG_git,
@@ -993,10 +1069,14 @@ class TSDatasetGenerator:
             "disabled_anomaly_types": disabled_anomaly_types,
             "aggregated_statistics": dataset_stats,
             "derived_seeds": all_seed_audit,
+            "metadata_registry": metadata_registry,
+            "generator_sidecars": generator_sidecars,
+            "annotation_channels": generator_sidecars["annotation_channels"],
+            "law_level_replicates": generator_sidecars["law_level_replicates"],
             "label_semantics": {
-                "version": "label_semantics.v1",
+                "version": "label_semantics.v2",
                 "labels_any": "event interval union across all events",
-                "labels_affected": (
+                "labels_intervention": (
                     "operator target or perturbed channels; not necessarily the final "
                     "benchmark target for relation-only anomalies"
                 ),
@@ -1253,6 +1333,9 @@ class TSDatasetGenerator:
                 "channels": self.config.channels,
                 "splits": list(self.config.splits),
                 "instances_per_split": self.config.instances_per_split,
+                "split_instance_counts": _to_builtin_types(
+                    self.config.split_instance_counts
+                ),
             },
             "anomaly_policy": {
                 "density_range": list(self.config.density_range),
@@ -1292,33 +1375,68 @@ class TSDatasetGenerator:
             instances_dir.mkdir(parents=True, exist_ok=True)
             split_seed_audit: Dict[str, Dict[str, int]] = {}
             split_instance_summaries: List[Dict[str, Any]] = []
+            split_counts = self.config.split_instance_counts.get(
+                split,
+                {
+                    "paired_instances_per_variant": self.config.instances_per_split,
+                    "clean_only_instances_per_variant": 0,
+                },
+            )
+            paired_instances = int(split_counts.get("paired_instances_per_variant", 0))
+            clean_only_instances = int(
+                split_counts.get("clean_only_instances_per_variant", 0)
+            )
+            instance_specs = [
+                ("paired", index, f"instance_{index:03d}")
+                for index in range(paired_instances)
+            ] + [
+                ("clean_only", index, f"clean_only_{index:03d}")
+                for index in range(clean_only_instances)
+            ]
 
-            for instance_index in tqdm(
-                range(self.config.instances_per_split),
+            for instance_role, instance_index, instance_name in tqdm(
+                instance_specs,
                 desc=f"{variant.variant_id}/{split}",
                 leave=False,
             ):
-                instance_name = f"instance_{instance_index:03d}"
                 instance_dir = instances_dir / instance_name
                 instance_dir.mkdir(parents=True, exist_ok=True)
                 seeds = self._derive_instance_seeds(
-                    variant.variant_id, split, instance_index
+                    variant.variant_id,
+                    split,
+                    _split_seed_index(
+                        role=instance_role,
+                        index=instance_index,
+                        paired_count=paired_instances,
+                    ),
                 )
                 split_seed_audit[instance_name] = seeds
-                summary = self._generate_instance(
-                    variant=variant,
-                    split=split,
-                    instance_dir=instance_dir,
-                    seeds=seeds,
-                    base_parameter_template=base_parameter_template,
-                    base_channel_parameter_template=base_channel_parameter_template,
-                    anomaly_parameter_template=anomaly_parameter_template,
-                    fixed_base_parameters=fixed_base_parameters,
-                    fixed_base_channel_parameters=fixed_base_channel_parameters,
-                    fixed_anomaly_parameters=fixed_anomaly_parameters,
-                    variant_anomaly_policy=variant_anomaly_policy,
-                    variant_segment_planner=variant_segment_planner,
-                )
+                if instance_role == "clean_only":
+                    summary = self._generate_clean_only_instance(
+                        variant=variant,
+                        split=split,
+                        instance_dir=instance_dir,
+                        seeds=seeds,
+                        base_parameter_template=base_parameter_template,
+                        base_channel_parameter_template=base_channel_parameter_template,
+                        fixed_base_parameters=fixed_base_parameters,
+                        fixed_base_channel_parameters=fixed_base_channel_parameters,
+                    )
+                else:
+                    summary = self._generate_instance(
+                        variant=variant,
+                        split=split,
+                        instance_dir=instance_dir,
+                        seeds=seeds,
+                        base_parameter_template=base_parameter_template,
+                        base_channel_parameter_template=base_channel_parameter_template,
+                        anomaly_parameter_template=anomaly_parameter_template,
+                        fixed_base_parameters=fixed_base_parameters,
+                        fixed_base_channel_parameters=fixed_base_channel_parameters,
+                        fixed_anomaly_parameters=fixed_anomaly_parameters,
+                        variant_anomaly_policy=variant_anomaly_policy,
+                        variant_segment_planner=variant_segment_planner,
+                    )
                 split_instance_summaries.append(summary)
                 variant_instance_summaries.append(summary)
 
@@ -1332,7 +1450,9 @@ class TSDatasetGenerator:
             split_entries.append(
                 {
                     "split": split,
-                    "instances": self.config.instances_per_split,
+                    "instances": len(instance_specs),
+                    "paired_instances": paired_instances,
+                    "clean_only_instances": clean_only_instances,
                     "summary_file": str(
                         (Path(split) / "split_summary.json").as_posix()
                     ),
@@ -1461,6 +1581,143 @@ class TSDatasetGenerator:
             "params_seed": _derive_seed(instance_seed, "parameter-sampling"),
             "zoom_seed": _derive_seed(instance_seed, "zoom-selection"),
         }
+
+    def _generate_clean_only_instance(
+        self,
+        variant: VariantSpec,
+        split: str,
+        instance_dir: Path,
+        seeds: Mapping[str, int],
+        base_parameter_template: Mapping[str, Any],
+        base_channel_parameter_template: Mapping[str, Any],
+        fixed_base_parameters: Optional[Mapping[str, Any]],
+        fixed_base_channel_parameters: Optional[List[Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        base_parameter_rng = np.random.default_rng(int(seeds["base_params_seed"]))
+        base_channel_parameter_rng = np.random.default_rng(
+            int(seeds["base_channel_params_seed"])
+        )
+        if self.config.base_parameter_policy == "fixed_per_variant":
+            if fixed_base_parameters is None:
+                base_parameters = self._realize_parameters(
+                    base_parameter_template,
+                    base_parameter_rng,
+                )
+            else:
+                base_parameters = copy.deepcopy(dict(fixed_base_parameters))
+        else:
+            base_parameters = self._realize_parameters(
+                base_parameter_template,
+                base_parameter_rng,
+            )
+
+        if self.config.base_channel_parameter_policy == "fixed_per_variant":
+            if fixed_base_channel_parameters is None:
+                base_channel_parameters = self._realize_base_channel_parameters(
+                    base_channel_parameter_template,
+                    base_channel_parameter_rng,
+                )
+            else:
+                base_channel_parameters = copy.deepcopy(fixed_base_channel_parameters)
+        else:
+            base_channel_parameters = self._realize_base_channel_parameters(
+                base_channel_parameter_template,
+                base_channel_parameter_rng,
+            )
+        base_parameters_per_channel_raw = self._compose_base_parameters_per_channel(
+            base_parameters=base_parameters,
+            base_channel_parameters=base_channel_parameters,
+        )
+        (
+            base_parameters_per_channel,
+            split_phase_shift_info,
+        ) = self._apply_split_phase_shift(
+            base_parameters_per_channel=base_parameters_per_channel_raw,
+            split=split,
+        )
+        effective_base_channel_correlation = self._resolve_base_channel_correlation(
+            variant
+        )
+        clean_bos = self._generate_base_channels(
+            base_kind=variant.base_oscillation,
+            base_parameters_per_channel=base_parameters_per_channel,
+            seed=int(seeds["base_seed"]),
+        )
+        self._apply_shared_noise_correlation(
+            clean_bos,
+            seed=int(seeds["base_shared_noise_seed"]),
+            base_channel_correlation=effective_base_channel_correlation,
+        )
+        clean_base = self._stack_channel_timeseries(clean_bos)
+        clean = self._apply_variations(clean_base, clean_bos)
+        labels = np.zeros((self.config.length, self.config.channels), dtype=np.int8)
+        events: list[dict[str, Any]] = []
+
+        self._write_timeseries_csv(instance_dir / "clean.csv", clean)
+        self._write_timeseries_csv(instance_dir / "anomalous.csv", clean)
+        self._write_labels_csv(instance_dir / "labels_pointwise.csv", labels)
+        label_masks = build_label_masks(
+            length=self.config.length,
+            channels=self.config.channels,
+            events=events,
+        )
+        write_label_masks(instance_dir, label_masks)
+        _write_json(instance_dir / "events.json", events)
+
+        per_channel_counts = {str(channel): 0 for channel in range(self.config.channels)}
+        instance_summary: Dict[str, Any] = {
+            "instance_id": instance_dir.name,
+            "instance_role": "clean_only",
+            "has_anomaly": False,
+            "split": split,
+            "variant_id": variant.variant_id,
+            "profile_id": variant.profile_id,
+            "base_oscillation": variant.base_oscillation,
+            "anomaly_type": variant.anomaly_type,
+            "target_density": 0.0,
+            "achieved_density": 0.0,
+            "achieved_density_labeled": 0.0,
+            "achieved_density_source": 0.0,
+            "density_validation_mode": "clean_only",
+            "density_error": 0.0,
+            "density_tolerance": 0.0,
+            "n_segments": 0,
+            "n_event_groups": 0,
+            "segment_length_mean": 0.0,
+            "segment_length_median": 0.0,
+            "segment_length_std": 0.0,
+            "segment_length_min": 0,
+            "segment_length_max": 0,
+            "segment_lengths": [],
+            "source_segment_lengths": [],
+            "effective_support_shrink_count": 0,
+            "energy_fallback_count": 0,
+            "per_channel_segment_counts": per_channel_counts,
+            "channel_policy": "clean_only",
+            "overlap_policy": "none",
+            "segment_planner": {},
+            "variant_anomaly_policy": {},
+            "length_normalization": self.config.length_normalization,
+            "support_label_mode": self.config.support_label_mode,
+            "support_eps_mode": self.config.support_eps_mode,
+            "support_eps_value": self.config.support_eps_value,
+            "base_parameter_policy": self.config.base_parameter_policy,
+            "base_channel_parameter_policy": self.config.base_channel_parameter_policy,
+            "anomaly_parameter_policy": self.config.anomaly_parameter_policy,
+            "base_parameters": _to_builtin_types(base_parameters),
+            "base_channel_parameters": _to_builtin_types(base_channel_parameters),
+            "base_parameters_per_channel": _to_builtin_types(
+                base_parameters_per_channel
+            ),
+            "split_phase_shift": _to_builtin_types(split_phase_shift_info),
+            "base_channel_correlation": _to_builtin_types(
+                effective_base_channel_correlation
+            ),
+            "anomaly_parameters_instance": None,
+            "seeds": dict(seeds),
+        }
+        _write_json(instance_dir / "instance_summary.json", instance_summary)
+        return _to_builtin_types(instance_summary)
 
     def _generate_instance(
         self,
@@ -1748,6 +2005,8 @@ class TSDatasetGenerator:
         )
         instance_summary: Dict[str, Any] = {
             "instance_id": instance_dir.name,
+            "instance_role": "paired",
+            "has_anomaly": True,
             "split": split,
             "variant_id": variant.variant_id,
             "profile_id": variant.profile_id,
@@ -2206,6 +2465,19 @@ class TSDatasetGenerator:
                 anomaly_policy=special_policy,
                 clean_values=clean_values,
                 anomaly_type=anomaly_type,
+            )
+            return self._apply_channel_policy_to_segments(
+                raw_segments, rng, channel_policy=active_channel_policy
+            )
+        if planner_name == "mode_grid_segments":
+            raw_segments = self._sample_mode_grid_segments(
+                rng=rng,
+                target_density=target_density,
+                overlap_policy=overlap_policy,
+                planner_cfg=planner_cfg,
+                anomaly_policy=special_policy,
+                anomaly_type=anomaly_type,
+                base_period_size=base_period_size,
             )
             return self._apply_channel_policy_to_segments(
                 raw_segments, rng, channel_policy=active_channel_policy
@@ -3568,6 +3840,257 @@ class TSDatasetGenerator:
         )
         return segments
 
+    def _sample_mode_grid_segments(
+        self,
+        rng: np.random.Generator,
+        target_density: float,
+        overlap_policy: str,
+        planner_cfg: Mapping[str, Any],
+        anomaly_policy: Mapping[str, Any],
+        anomaly_type: str,
+        base_period_size: Optional[int],
+    ) -> List[SegmentPlan]:
+        """Sample mode-correlation supports on the RMJ block grid.
+
+        Unlike ``mode_boundary_segments``, this planner does not inspect the
+        realized sign trace. Starts and lengths are sampled from the potential
+        RMJ block grid, so support placement is independent of the realized
+        one-channel mode sequence.
+        """
+        if anomaly_type != "mode-correlation":
+            raise ValueError(
+                "mode_grid_segments planner is only supported for anomaly_type='mode-correlation'."
+            )
+        if base_period_size is None or int(base_period_size) <= 0:
+            raise ValueError(
+                "mode_grid_segments requires a positive base_period_size from the base oscillator."
+            )
+        block_size = max(1, int(base_period_size))
+        # Use complete observable blocks when the series length is not an exact
+        # multiple of the RMJ grid. The final right-censored block is valid
+        # clean data, but using it as an anomaly support makes event lengths
+        # look off-grid.
+        n_blocks = max(1, int(self.config.length // block_size))
+
+        segment_count_range = _parse_pair_int(
+            anomaly_policy.get(
+                "segment_count_range",
+                planner_cfg.get("segment_count_range", self.config.segment_count_range),
+            ),
+            "segment_count_range",
+        )
+        if segment_count_range[0] > segment_count_range[1]:
+            segment_count_range = (segment_count_range[1], segment_count_range[0])
+        n_segments = int(
+            rng.integers(segment_count_range[0], segment_count_range[1] + 1)
+        )
+
+        target_points = int(round(target_density * self.config.length))
+        target_blocks = max(1, int(round(float(target_points) / float(block_size))))
+
+        density_range = _parse_pair(
+            anomaly_policy.get(
+                "density_range",
+                planner_cfg.get("density_range", self.config.density_range),
+            ),
+            "density_range",
+        )
+        density_min = max(0.0, min(float(density_range[0]), float(density_range[1])))
+        density_max = min(1.0, max(float(density_range[0]), float(density_range[1])))
+        min_target_blocks = max(
+            1,
+            int(np.ceil((density_min * float(self.config.length)) / float(block_size))),
+        )
+        max_target_blocks = max(
+            min_target_blocks,
+            int(np.floor((density_max * float(self.config.length)) / float(block_size))),
+        )
+        min_target_blocks = min(min_target_blocks, n_blocks)
+        max_target_blocks = min(max_target_blocks, n_blocks)
+        if max_target_blocks < min_target_blocks:
+            max_target_blocks = min_target_blocks
+        target_blocks = int(
+            np.clip(target_blocks, min_target_blocks, max_target_blocks)
+        )
+
+        raw_min_blocks = planner_cfg.get(
+            "min_blocks",
+            anomaly_policy.get(
+                "min_blocks",
+                int(
+                    np.ceil(
+                        float(
+                            anomaly_policy.get(
+                                "min_segment_length",
+                                planner_cfg.get(
+                                    "min_segment_length",
+                                    self._minimum_segment_length(anomaly_type),
+                                ),
+                            )
+                        )
+                        / float(block_size)
+                    )
+                ),
+            ),
+        )
+        min_blocks = max(1, int(raw_min_blocks))
+        raw_max_blocks = planner_cfg.get(
+            "max_blocks",
+            anomaly_policy.get("max_blocks", target_blocks),
+        )
+        max_blocks = max(min_blocks, int(raw_max_blocks))
+        max_blocks = min(max_blocks, n_blocks)
+        min_gap_blocks = max(
+            0,
+            int(
+                planner_cfg.get(
+                    "min_gap_blocks",
+                    anomaly_policy.get("min_gap_blocks", 0),
+                )
+            ),
+        )
+        min_gap_points = int(min_gap_blocks * block_size)
+
+        max_segments_for_min_blocks = max(1, target_blocks // max(1, min_blocks))
+        if n_segments > max_segments_for_min_blocks:
+            n_segments = max_segments_for_min_blocks
+        if n_segments <= 0:
+            raise ValueError("mode_grid_segments could not allocate any segments.")
+        if n_segments * max_blocks < target_blocks:
+            target_blocks = n_segments * max_blocks
+        if n_segments * min_blocks > target_blocks:
+            target_blocks = n_segments * min_blocks
+        block_lengths = self._sample_bounded_integer_lengths(
+            rng,
+            total_points=int(target_blocks),
+            n_segments=int(n_segments),
+            min_value=int(min_blocks),
+            max_value=int(max_blocks),
+        )
+
+        occupied_global = np.zeros(self.config.length, dtype=np.int8)
+        occupied_per_channel = np.zeros(
+            (self.config.channels, self.config.length), dtype=np.int8
+        )
+        segments: List[SegmentPlan] = []
+
+        for block_length in block_lengths:
+            placed = False
+            max_start_block = max(0, n_blocks - int(block_length))
+            for _ in range(self.config.max_placement_attempts):
+                channel = int(rng.integers(0, self.config.channels))
+                start_block = int(rng.integers(0, max_start_block + 1))
+                end_block = start_block + int(block_length)
+                start = int(start_block * block_size)
+                end = int(min(self.config.length, end_block * block_size))
+                if end <= start:
+                    continue
+                slot_start = max(0, start - min_gap_points)
+                slot_end = min(self.config.length, end + min_gap_points)
+                if not self._is_slot_available(
+                    slot_start,
+                    slot_end,
+                    channel,
+                    overlap_policy,
+                    occupied_global,
+                    occupied_per_channel,
+                ):
+                    continue
+                self._occupy_slot(
+                    slot_start,
+                    slot_end,
+                    channel,
+                    overlap_policy,
+                    occupied_global,
+                    occupied_per_channel,
+                )
+                segments.append(
+                    SegmentPlan(
+                        start=start,
+                        end=end,
+                        length=int(end - start),
+                        channel=channel,
+                        attrs={
+                            "planner": "mode_grid_segments",
+                            "mode_grid_aligned": True,
+                            "mode_change_aligned": False,
+                            "support_independent_of_realized_mode_state": True,
+                            "mode_grid_block_size": int(block_size),
+                            "mode_grid_start_block": int(start_block),
+                            "mode_grid_end_block": int(end_block),
+                            "mode_grid_block_length": int(block_length),
+                            "mode_grid_min_gap_blocks": int(min_gap_blocks),
+                        },
+                    )
+                )
+                placed = True
+                break
+
+            if placed:
+                continue
+
+            channel_order = rng.permutation(self.config.channels).tolist()
+            for channel in channel_order:
+                for start_block in range(max_start_block + 1):
+                    end_block = int(start_block) + int(block_length)
+                    start = int(start_block * block_size)
+                    end = int(min(self.config.length, end_block * block_size))
+                    if end <= start:
+                        continue
+                    slot_start = max(0, start - min_gap_points)
+                    slot_end = min(self.config.length, end + min_gap_points)
+                    if not self._is_slot_available(
+                        slot_start,
+                        slot_end,
+                        int(channel),
+                        overlap_policy,
+                        occupied_global,
+                        occupied_per_channel,
+                    ):
+                        continue
+                    self._occupy_slot(
+                        slot_start,
+                        slot_end,
+                        int(channel),
+                        overlap_policy,
+                        occupied_global,
+                        occupied_per_channel,
+                    )
+                    segments.append(
+                        SegmentPlan(
+                            start=start,
+                            end=end,
+                            length=int(end - start),
+                            channel=int(channel),
+                            attrs={
+                                "planner": "mode_grid_segments",
+                                "mode_grid_aligned": True,
+                                "mode_change_aligned": False,
+                                "support_independent_of_realized_mode_state": True,
+                                "mode_grid_block_size": int(block_size),
+                                "mode_grid_start_block": int(start_block),
+                                "mode_grid_end_block": int(end_block),
+                                "mode_grid_block_length": int(block_length),
+                                "mode_grid_min_gap_blocks": int(min_gap_blocks),
+                            },
+                        )
+                    )
+                    placed = True
+                    break
+                if placed:
+                    break
+
+            if not placed:
+                raise ValueError(
+                    "Failed to place a mode_grid segment of target block length "
+                    f"{block_length}."
+                )
+
+        segments.sort(
+            key=lambda segment: (segment.start, segment.channel, segment.length)
+        )
+        return segments
+
     def _sample_point_event_segments(
         self,
         rng: np.random.Generator,
@@ -3831,7 +4354,7 @@ class TSDatasetGenerator:
             special = {}
         if anomaly_type == "mode-correlation":
             special.setdefault("channel_policy", "paired-random")
-            special.setdefault("segment_planner", {"planner": "mode_boundary_segments"})
+            special.setdefault("segment_planner", {"planner": "mode_grid_segments"})
         elif anomaly_type in {
             "correlation-flip",
             "covariance-change",
@@ -4703,8 +5226,8 @@ class TSDatasetGenerator:
                     group_channels=[
                         int(ch) for ch in attrs.get("group_channels", [int(channel)])
                     ],
-                    affected_channels=[
-                        int(ch) for ch in attrs.get("affected_channels", [int(channel)])
+                    intervention_channels=[
+                        int(ch) for ch in attrs.get("intervention_channels", [int(channel)])
                     ],
                     anomaly_object=str(attrs.get("anomaly_object", anomaly_type)),
                     channel_visible=bool(attrs.get("channel_visible", True)),
@@ -5166,6 +5689,43 @@ def _parse_pair_int(raw: Any, field_name: str) -> Tuple[int, int]:
     return int(left), int(right)
 
 
+def _parse_split_instance_counts(
+    raw_splits: Any,
+    default_instances_per_split: int,
+) -> Dict[str, Dict[str, int]]:
+    if isinstance(raw_splits, Mapping):
+        parsed: Dict[str, Dict[str, int]] = {}
+        for split_name, raw_cfg in raw_splits.items():
+            if not isinstance(raw_cfg, Mapping):
+                raise ValueError(f"dataset.splits[{split_name}] must be a mapping")
+            cfg = dict(raw_cfg)
+            paired_count = int(
+                cfg.get(
+                    "paired_instances_per_variant",
+                    cfg.get(
+                        "instances_per_variant",
+                        cfg.get("instances_per_split", 0),
+                    ),
+                )
+            )
+            clean_only_count = int(cfg.get("clean_only_instances_per_variant", 0))
+            parsed[str(split_name)] = {
+                "paired_instances_per_variant": paired_count,
+                "clean_only_instances_per_variant": clean_only_count,
+            }
+        return parsed
+    splits = tuple(str(split) for split in _optional_str_list(raw_splits))
+    if len(splits) == 0:
+        splits = DEFAULT_SPLITS
+    return {
+        split: {
+            "paired_instances_per_variant": int(default_instances_per_split),
+            "clean_only_instances_per_variant": 0,
+        }
+        for split in splits
+    }
+
+
 def _parse_pair_profiles(raw: Any) -> Dict[str, List[str]]:
     if raw is None:
         return {}
@@ -5213,6 +5773,12 @@ def _derive_seed(seed: int, *parts: str) -> int:
     payload = f"{seed}|" + "|".join(parts)
     digest = hashlib.sha256(payload.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=False) % (2**32)
+
+
+def _split_seed_index(*, role: str, index: int, paired_count: int) -> int:
+    if role == "clean_only":
+        return int(paired_count) + int(index)
+    return int(index)
 
 
 def _sample_between(lower: Any, upper: Any, rng: np.random.Generator) -> Any:

@@ -1,0 +1,28 @@
+contract_id: synthgen.contract.pattern.v1
+anomaly_type: pattern
+intended_constraints:
+  - shape.local_template
+canonical_witnesses:
+  - shape_residual
+  - energy_delta
+  - spectral_delta
+allowed_artifacts:
+  boundary.discontinuity: false
+forbidden_shortcuts:
+  - boundary.discontinuity
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior
+  boundary_primary_allowed: false
+channel_role_policy:
+  intervention_min: 1
+  context_min: 0
+  canonical_min_projection_size: 1
+realized_effect_schema:
+  - template_distance_clean
+  - template_distance_anomalous
+  - shape_residual_ratio
+  - boundary_shape_residual_share
+admission_policy:
+  require_canonical_witness: true
+  require_realized_effect: true

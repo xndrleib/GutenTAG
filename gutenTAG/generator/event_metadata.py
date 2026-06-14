@@ -14,7 +14,7 @@ def build_event_record(
     source_end: int,
     group_id: int,
     group_channels: Sequence[int],
-    affected_channels: Optional[Sequence[int]] = None,
+    intervention_channels: Optional[Sequence[int]] = None,
     anomaly_object: Optional[str] = None,
     channel_visible: Optional[bool] = None,
     purity_hint: Optional[str] = None,
@@ -22,13 +22,13 @@ def build_event_record(
 ) -> dict[str, Any]:
     """Create a normalized event record for `events.json`."""
     normalized_group_channels = [int(ch) for ch in group_channels]
-    normalized_affected = (
-        [int(ch) for ch in affected_channels]
-        if affected_channels is not None
+    normalized_intervention = (
+        [int(ch) for ch in intervention_channels]
+        if intervention_channels is not None
         else [int(channel)]
     )
     context_channels = sorted(
-        set(normalized_group_channels + normalized_affected + [int(channel)])
+        set(normalized_group_channels + normalized_intervention + [int(channel)])
     )
     if extra is not None and "anchor_channel" in extra:
         context_channels = sorted(
@@ -46,9 +46,9 @@ def build_event_record(
         "anomaly_type": str(anomaly_type),
         "group_id": int(group_id),
         "group_channels": normalized_group_channels,
-        "affected_channels": normalized_affected,
-        "operator_target_channels": normalized_affected,
-        "perturbed_channels": normalized_affected,
+        "intervention_channels": normalized_intervention,
+        "operator_target_channels": normalized_intervention,
+        "perturbed_channels": normalized_intervention,
         "context_channels": context_channels,
         "event_scope": event_scope,
         "params": params,

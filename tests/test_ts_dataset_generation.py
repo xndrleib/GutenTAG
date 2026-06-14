@@ -133,9 +133,43 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertIn("normalized_config_hash", manifest)
             self.assertIn("label_semantics", manifest)
             self.assertIn("artifacts", manifest)
+            self.assertIn("annotation_channels", manifest)
+            self.assertIn("law_level_replicates", manifest)
             variant_dir = output_root / "variants" / "sine__mean__p00"
             self.assertTrue((output_root / "dataset_manifest.json").exists())
             self.assertTrue((variant_dir / "variant_config.yaml").exists())
+            labels_dir = output_root / "labels"
+            for label_name in (
+                "labels_oracle_any",
+                "labels_oracle_intervention",
+                "labels_oracle_context",
+                "labels_event_only",
+                "labels_delayed",
+                "labels_weak_point",
+                "labels_visible_only",
+                "labels_noisy_boundary",
+                "labels_censored",
+            ):
+                label_path = labels_dir / f"{label_name}.csv"
+                self.assertTrue(label_path.exists(), label_path)
+                self.assertEqual(
+                    manifest["annotation_channels"]["table_paths"][label_name],
+                    f"labels/{label_name}.csv",
+                )
+            self.assertTrue((labels_dir / "annotation_channel_manifest.json").exists())
+            oracle_labels = pd.read_csv(labels_dir / "labels_oracle_any.csv")
+            self.assertEqual(oracle_labels.shape[0], 600 * 2 * 2)
+            law_manifest = manifest["law_level_replicates"]
+            self.assertEqual(
+                law_manifest["replicate_count"],
+                manifest["metadata_registry"]["event_count"],
+            )
+            self.assertTrue((output_root / law_manifest["replicate_registry_path"]).exists())
+            self.assertTrue((output_root / law_manifest["replicate_table_path"]).exists())
+            law_table = pd.read_csv(output_root / law_manifest["replicate_table_path"])
+            self.assertEqual(law_table.shape[0], law_manifest["replicate_count"])
+            self.assertIn("genotype_id", law_table.columns)
+            self.assertIn("paired_seed_policy", law_table.columns)
 
             for split in ["train", "val"]:
                 split_dir = variant_dir / split
@@ -148,7 +182,7 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     self.assertTrue((instance_dir / "anomalous.csv").exists())
                     self.assertTrue((instance_dir / "labels_pointwise.csv").exists())
                     self.assertTrue((instance_dir / "labels_any.csv").exists())
-                    self.assertTrue((instance_dir / "labels_affected.csv").exists())
+                    self.assertTrue((instance_dir / "labels_intervention.csv").exists())
                     self.assertTrue((instance_dir / "labels_context.csv").exists())
                     self.assertTrue((instance_dir / "events.json").exists())
                     self.assertTrue((instance_dir / "instance_summary.json").exists())
@@ -195,6 +229,85 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     self.assertEqual(
                         summary["anomaly_parameter_policy"], "fixed_per_variant"
                     )
+
+    def test_v12_sidecar_config_controls_emitted_channels_and_replicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 120
+            config["dataset"]["splits"] = ["train"]
+            config["dataset"]["instances_per_split"] = 1
+            config["anomaly_policy"]["segment_count_range"] = [2, 2]
+            config["plot"]["enabled"] = False
+            config["annotation_channels"] = {"emit": ["oracle", "event_only"]}
+            config["law_level_replicates"] = {
+                "enabled": True,
+                "replicas_per_genotype": 1,
+                "paired_seed_policy": "same_base_parameters",
+                "output_split": "law_replicates_debug",
+            }
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+
+            emitted = set(manifest["annotation_channels"]["emit"])
+            self.assertEqual(
+                emitted,
+                {
+                    "labels_oracle_any",
+                    "labels_oracle_intervention",
+                    "labels_oracle_context",
+                    "labels_event_only",
+                },
+            )
+            self.assertTrue((output_root / "labels" / "labels_event_only.csv").exists())
+            self.assertFalse((output_root / "labels" / "labels_delayed.csv").exists())
+            law_manifest = manifest["law_level_replicates"]
+            self.assertEqual(law_manifest["output_split"], "law_replicates_debug")
+            self.assertEqual(law_manifest["replicas_per_genotype_requested"], 1)
+            self.assertEqual(law_manifest["replicate_count"], law_manifest["genotype_count"])
+            law_table = pd.read_csv(output_root / law_manifest["replicate_table_path"])
+            self.assertEqual(law_table["paired_seed_policy"].unique().tolist(), ["same_base_parameters"])
+
+    def test_split_mapping_can_emit_clean_only_calibration_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "dataset"
+            config = self._base_config(output_root)
+            config["dataset"]["length"] = 120
+            config["dataset"]["splits"] = {
+                "train": {"paired_instances_per_variant": 1},
+                "calibration": {"clean_only_instances_per_variant": 2},
+            }
+            config["dataset"].pop("instances_per_split")
+            config["anomaly_policy"]["segment_count_range"] = [1, 1]
+            config["plot"]["enabled"] = False
+
+            manifest = TSDatasetGenerator.from_dict(config).run()
+
+            variant = output_root / "variants" / "sine__mean__p00"
+            self.assertTrue((variant / "train" / "instances" / "instance_000").exists())
+            for index in range(2):
+                instance_dir = (
+                    variant / "calibration" / "instances" / f"clean_only_{index:03d}"
+                )
+                self.assertTrue((instance_dir / "clean.csv").exists())
+                self.assertTrue((instance_dir / "anomalous.csv").exists())
+                with (instance_dir / "events.json").open("r", encoding="utf-8") as handle:
+                    self.assertEqual(json.load(handle), [])
+                with (instance_dir / "instance_summary.json").open(
+                    "r",
+                    encoding="utf-8",
+                ) as handle:
+                    summary = json.load(handle)
+                self.assertEqual(summary["instance_role"], "clean_only")
+                self.assertFalse(summary["has_anomaly"])
+
+            split_entries = manifest["variant_manifests"][0]["splits"]
+            by_split = {entry["split"]: entry for entry in split_entries}
+            self.assertEqual(by_split["train"]["paired_instances"], 1)
+            self.assertEqual(by_split["train"]["clean_only_instances"], 0)
+            self.assertEqual(by_split["calibration"]["paired_instances"], 0)
+            self.assertEqual(by_split["calibration"]["clean_only_instances"], 2)
+            self.assertEqual(manifest["metadata_registry"]["event_count"], 1)
 
     def test_reproducible_outputs_for_same_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1969,10 +2082,16 @@ class TestTSDatasetGeneration(unittest.TestCase):
             )
 
             self.assertEqual(summary["channel_policy"], "paired-random")
+            self.assertEqual(summary["segment_planner"]["planner"], "mode_grid_segments")
             self.assertGreater(len(events), 0)
             for event in events:
                 self.assertEqual(event["anomaly_object"], "relation_sign_flip")
-                self.assertTrue(bool(event["mode_change_aligned"]))
+                self.assertFalse(bool(event["mode_change_aligned"]))
+                self.assertTrue(bool(event["mode_grid_aligned"]))
+                self.assertTrue(
+                    bool(event["support_independent_of_realized_mode_state"])
+                )
+                self.assertTrue(bool(event["latent_mode_flip"]))
                 self.assertEqual(len(event["group_channels"]), 2)
                 self.assertIn(
                     int(event["anchor_channel"]),
@@ -1982,6 +2101,18 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     int(event["channel"]), [int(ch) for ch in event["flipped_channels"]]
                 )
                 source_start = int(event["source_start"])
+                source_end = int(event["source_end"])
+                block_size = int(event["mode_grid_block_size"])
+                self.assertEqual(source_start % block_size, 0)
+                self.assertEqual(source_end % block_size, 0)
+                self.assertEqual(
+                    source_start,
+                    int(event["mode_grid_start_block"]) * block_size,
+                )
+                self.assertEqual(
+                    source_end,
+                    int(event["mode_grid_end_block"]) * block_size,
+                )
                 channel = int(event["channel"])
                 self.assertNotAlmostEqual(
                     float(anomalous[source_start, channel]),
@@ -1989,6 +2120,58 @@ class TestTSDatasetGeneration(unittest.TestCase):
                     places=6,
                     msg=f"Mode-correlation should remain visible on the flipped channel: {event}",
                 )
+
+    def test_shared_noise_relation_anomalies_rewrite_observed_relation(self) -> None:
+        for anomaly_type in ("correlation-flip", "covariance-change"):
+            with self.subTest(anomaly_type=anomaly_type):
+                with tempfile.TemporaryDirectory() as tmp:
+                    output_root = Path(tmp) / "dataset"
+                    config = self._base_config(output_root)
+                    config["dataset"]["length"] = 900
+                    config["dataset"]["channels"] = 4
+                    config["dataset"]["splits"] = ["train"]
+                    config["dataset"]["instances_per_split"] = 1
+                    config["anomaly_policy"]["density_range"] = [0.05, 0.06]
+                    config["anomaly_policy"]["density_tolerance"] = 0.02
+                    config["anomaly_policy"]["segment_count_range"] = [2, 2]
+                    config["anomaly_policy"]["channel_policy"] = "paired-random"
+                    config["anomaly_policy"]["min_segment_length_by_anomaly"] = {
+                        anomaly_type: 48
+                    }
+                    config["variants"]["base_oscillations"] = ["shared-noise-sine"]
+                    config["variants"]["anomaly_types"] = [anomaly_type]
+                    config["variants"]["anomaly_parameter_policy"] = "fixed_per_variant"
+                    config["plot"]["enabled"] = False
+
+                    manifest = TSDatasetGenerator.from_dict(config).run()
+                    variant_id = f"shared-noise-sine__{anomaly_type}__p00"
+                    self.assertIn(variant_id, manifest["generated_variants"])
+                    instance_dir = (
+                        output_root
+                        / "variants"
+                        / variant_id
+                        / "train"
+                        / "instances"
+                        / "instance_000"
+                    )
+                    events = json.loads((instance_dir / "events.json").read_text(encoding="utf-8"))
+                    clean = pd.read_csv(instance_dir / "clean.csv").to_numpy(dtype=np.float64)
+                    anomalous = pd.read_csv(instance_dir / "anomalous.csv").to_numpy(dtype=np.float64)
+                    event = events[0]
+                    channels = [int(channel) for channel in event["group_channels"][:2]]
+                    source_start = int(event["source_start"])
+                    source_end = int(event["source_end"])
+
+                    clean_corr = float(
+                        np.corrcoef(clean[source_start:source_end, channels], rowvar=False)[0, 1]
+                    )
+                    anomalous_corr = float(
+                        np.corrcoef(anomalous[source_start:source_end, channels], rowvar=False)[0, 1]
+                    )
+
+                    self.assertGreater(clean_corr, 0.5)
+                    self.assertLess(anomalous_corr, -0.5)
+                    self.assertEqual(event["injection_level"], "observed_window")
 
     def test_base_channel_shared_across_channels_lockstep_sampling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2192,16 +2375,16 @@ class TestTSDatasetGeneration(unittest.TestCase):
                 self.assertEqual(summary["channel_policy"], "paired-random")
                 self.assertGreater(len(events), 0)
                 for event in events:
-                    self.assertIn("affected_channels", event)
+                    self.assertIn("intervention_channels", event)
                     self.assertIn("anomaly_object", event)
                     self.assertIn("group_id", event)
                     self.assertIn("group_channels", event)
                     self.assertIn("channel_visible", event)
                     self.assertIn("purity_hint", event)
-                    affected = [int(ch) for ch in event["affected_channels"]]
+                    intervention = [int(ch) for ch in event["intervention_channels"]]
                     group_channels = [int(ch) for ch in event["group_channels"]]
                     self.assertGreaterEqual(len(group_channels), 2)
-                    self.assertTrue(set(affected).issubset(set(group_channels)))
+                    self.assertTrue(set(intervention).issubset(set(group_channels)))
 
     def test_covariance_change_increases_relation_shift_signal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2313,10 +2496,10 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertEqual(len(events), 2)
             event = events[0]
             channels = [int(ch) for ch in event["group_channels"]]
-            affected = [int(ch) for ch in event["affected_channels"]]
+            intervention = [int(ch) for ch in event["intervention_channels"]]
             self.assertEqual(len(channels), 2)
-            self.assertEqual(len(affected), 1)
-            self.assertNotEqual(affected[0], channels[0])
+            self.assertEqual(len(intervention), 1)
+            self.assertNotEqual(intervention[0], channels[0])
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
             clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
@@ -2326,13 +2509,13 @@ class TestTSDatasetGeneration(unittest.TestCase):
             self.assertGreater(clean_corr, 0.10)
             self.assertGreater(abs(float(anom_corr) - float(clean_corr)), 0.15)
             self.assertAlmostEqual(
-                float(anomalous[source_start, affected[0]]),
-                float(clean[source_start, affected[0]]),
+                float(anomalous[source_start, intervention[0]]),
+                float(clean[source_start, intervention[0]]),
                 places=8,
             )
             self.assertAlmostEqual(
-                float(anomalous[source_end - 1, affected[0]]),
-                float(clean[source_end - 1, affected[0]]),
+                float(anomalous[source_end - 1, intervention[0]]),
+                float(clean[source_end - 1, intervention[0]]),
                 places=8,
             )
             self.assertEqual(event["anomaly_object"], "pair_correlation_flip")
@@ -2388,7 +2571,7 @@ class TestTSDatasetGeneration(unittest.TestCase):
 
             event = events[0]
             channels = [int(ch) for ch in event["group_channels"]]
-            affected = [int(ch) for ch in event["affected_channels"]]
+            intervention = [int(ch) for ch in event["intervention_channels"]]
             source_start = int(event["source_start"])
             source_end = int(event["source_end"])
             clean_corr = _pair_residual_corr(clean, channels, source_start, source_end)
@@ -2396,7 +2579,7 @@ class TestTSDatasetGeneration(unittest.TestCase):
                 anomalous, channels, source_start, source_end
             )
             self.assertGreater(abs(float(clean_corr)) - abs(float(anom_corr)), 0.02)
-            self.assertGreaterEqual(len(affected), 1)
+            self.assertGreaterEqual(len(intervention), 1)
             self.assertEqual(event["anomaly_object"], "shared_factor_break")
             self.assertEqual(event["purity_hint"], "operational_candidate")
             self.assertEqual(event["injection_level"], "noise")

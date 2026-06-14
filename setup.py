@@ -112,6 +112,7 @@ if __name__ == "__main__":
         packages=find_packages(exclude=("tests", "tests.*")),
         package_data={
             "gutenTAG": ["py.typed", "config/schema/*", "utils/*.json"],
+            "gutenTAG.tsgen.contracts": ["resources/anomaly_contracts/*.yaml"],
         },
         cmdclass={
             "test": PyTestCommand,

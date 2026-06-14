@@ -81,7 +81,7 @@ def _deterministic_decorrelated_component(
     """Build a same-shape surrogate component with weak correlation to `values`.
 
     Different ``variant`` values choose different decorrelated surrogates. This is
-    useful for pair-level structural anomalies where every affected channel should
+    useful for pair-level structural anomalies where every intervention channel should
     lose the shared factor in a slightly different way instead of inheriting the
     exact same replacement component.
     """

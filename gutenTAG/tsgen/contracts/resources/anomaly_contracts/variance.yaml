@@ -1,0 +1,29 @@
+contract_id: synthgen.contract.variance.v1
+anomaly_type: variance
+intended_constraints:
+  - scale.variance
+canonical_witnesses:
+  - variance_delta
+  - energy_delta
+allowed_artifacts:
+  boundary.discontinuity: false
+  location.mean: false
+forbidden_shortcuts:
+  - boundary.discontinuity
+  - location.mean
+support_policy:
+  type: localized_interval
+  expected_primary_evidence: interior
+  boundary_primary_allowed: false
+channel_role_policy:
+  intervention_min: 1
+  context_min: 0
+  canonical_min_projection_size: 1
+realized_effect_schema:
+  - requested_scale
+  - realized_log_var_ratio
+  - realized_mad_ratio
+  - mean_drift_side_effect
+admission_policy:
+  require_canonical_witness: true
+  require_realized_effect: true

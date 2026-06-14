@@ -28,7 +28,7 @@ class GeneratorSection(_StrictModel):
 class DatasetSection(_StrictModel):
     length: Optional[int] = None
     channels: Optional[int] = None
-    splits: Optional[List[str]] = None
+    splits: Optional[Any] = None
     instances_per_split: Optional[int] = None
 
 
@@ -85,13 +85,27 @@ class IOSection(_StrictModel):
     csv_float_format: Optional[str] = None
 
 
+class AnnotationChannelsSection(_StrictModel):
+    emit: Optional[List[str]] = None
+
+
+class LawLevelReplicatesSection(_StrictModel):
+    enabled: Optional[bool] = None
+    replicas_per_genotype: Optional[int] = None
+    paired_seed_policy: Optional[str] = None
+    output_split: Optional[str] = None
+
+
 class TSRawConfig(_StrictModel):
+    dataset_version: Optional[str] = None
     generator: Optional[GeneratorSection] = None
     dataset: Optional[DatasetSection] = None
     variants: Optional[VariantsSection] = None
     anomaly_policy: Optional[AnomalyPolicySection] = None
     plot: Optional[PlotSection] = None
     io: Optional[IOSection] = None
+    annotation_channels: Optional[AnnotationChannelsSection] = None
+    law_level_replicates: Optional[LawLevelReplicatesSection] = None
 
     # Legacy top-level aliases still accepted by `TSGeneratorConfig.from_dict`.
     output_root: Optional[str] = None
@@ -102,7 +116,7 @@ class TSRawConfig(_StrictModel):
     allow_empty_dataset: Optional[bool] = None
     length: Optional[int] = None
     channels: Optional[int] = None
-    splits: Optional[List[str]] = None
+    splits: Optional[Any] = None
     instances_per_split: Optional[int] = None
     density_range: Optional[List[float]] = None
     density_tolerance: Optional[float] = None
