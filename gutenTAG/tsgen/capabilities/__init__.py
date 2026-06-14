@@ -3,7 +3,11 @@
 from .cache import CacheFingerprint, CacheStore
 from .output_store import OutputStore, OutputTableManifest, OutputTableSpec, ParquetOutputError
 from .partitions import PartitionResult, PartitionSpec, partition_sequence, run_partitions
-from .protocol import CapabilityProtocol
+from .protocol import (
+    CapabilityProtocol,
+    CapabilityRunConfig,
+    capability_run_config_from_yaml,
+)
 from .rolling import RollingStats
 
 
@@ -16,6 +20,7 @@ def run_capability_analysis(*args, **kwargs):
 
 __all__ = [
     "CapabilityProtocol",
+    "CapabilityRunConfig",
     "CacheFingerprint",
     "CacheStore",
     "OutputStore",
@@ -25,6 +30,7 @@ __all__ = [
     "PartitionResult",
     "PartitionSpec",
     "RollingStats",
+    "capability_run_config_from_yaml",
     "partition_sequence",
     "run_capability_analysis",
     "run_partitions",

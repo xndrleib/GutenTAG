@@ -8,7 +8,7 @@ runtime bounds rather than hard-coded QC pass/fail thresholds.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -96,6 +96,19 @@ class CapabilityProtocol:
         return cls(**normalized)
 
 
+@dataclass(frozen=True)
+class CapabilityRunConfig:
+    """Run-level settings loaded from a capability YAML file."""
+
+    protocol: CapabilityProtocol
+    profiles: tuple[str, ...] | None = None
+    profile_preset: str | None = None
+    output_format: Literal["csv", "parquet", "both"] | None = None
+    release_csv: bool | None = None
+    allow_parquet_fallback: bool | None = None
+    label_export: Literal["full", "diagnostics"] | None = None
+
+
 def protocol_from_yaml(path: str | None) -> CapabilityProtocol:
     """Load a protocol from YAML if a path is supplied."""
 
@@ -107,6 +120,58 @@ def protocol_from_yaml(path: str | None) -> CapabilityProtocol:
         payload = yaml.safe_load(handle) or {}
     if not isinstance(payload, Mapping):
         raise ValueError("Capability protocol YAML must contain a mapping")
+    return _protocol_from_payload(payload)
+
+
+def capability_run_config_from_yaml(path: str | None) -> CapabilityRunConfig:
+    """Load protocol and run-level settings from YAML.
+
+    The numeric capability protocol remains separate from execution settings.
+    CLI entrypoints use this object with the precedence ``CLI > YAML > default``.
+    """
+
+    if path is None:
+        return CapabilityRunConfig(protocol=CapabilityProtocol())
+    import yaml
+
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, Mapping):
+        raise ValueError("Capability protocol YAML must contain a mapping")
+    return CapabilityRunConfig(
+        protocol=_protocol_from_payload(payload),
+        profiles=_normalize_profiles(payload.get("profiles")),
+        profile_preset=_optional_string(payload.get("profile_preset")),
+        output_format=_output_format_from_payload(payload),
+        release_csv=_optional_bool(_nested_get(payload, ("output", "release_csv"))),
+        allow_parquet_fallback=_optional_bool(
+            _nested_get(payload, ("output", "allow_parquet_fallback"))
+        ),
+        label_export=_label_export_from_payload(payload),
+    )
+
+
+def _normalize_min_count_table(value: Any) -> tuple[tuple[float, int], ...]:
+    if isinstance(value, Mapping):
+        pairs = [(float(alpha), int(count)) for alpha, count in value.items()]
+    else:
+        pairs = []
+        for item in value:
+            if isinstance(item, Mapping):
+                alpha = item.get("alpha")
+                count = item.get("count")
+            else:
+                alpha, count = item
+            pairs.append((float(alpha), int(count)))
+    for alpha, count in pairs:
+        if alpha <= 0:
+            raise ValueError("calibration minimum-count alpha keys must be positive")
+        if count < 0:
+            raise ValueError("calibration minimum counts must be non-negative")
+    return tuple(sorted(pairs, key=lambda item: item[0]))
+
+
+def _protocol_from_payload(payload: Mapping[str, Any]) -> CapabilityProtocol:
     if "capability_protocol" in payload:
         nested = payload["capability_protocol"] or {}
         if not isinstance(nested, Mapping):
@@ -130,24 +195,78 @@ def protocol_from_yaml(path: str | None) -> CapabilityProtocol:
     return CapabilityProtocol.from_mapping(protocol_payload)
 
 
-def _normalize_min_count_table(value: Any) -> tuple[tuple[float, int], ...]:
-    if isinstance(value, Mapping):
-        pairs = [(float(alpha), int(count)) for alpha, count in value.items()]
+def _normalize_profiles(value: Any) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items: Sequence[Any] = value.replace(",", " ").split()
+    elif isinstance(value, Sequence):
+        items = value
     else:
-        pairs = []
-        for item in value:
-            if isinstance(item, Mapping):
-                alpha = item.get("alpha")
-                count = item.get("count")
-            else:
-                alpha, count = item
-            pairs.append((float(alpha), int(count)))
-    for alpha, count in pairs:
-        if alpha <= 0:
-            raise ValueError("calibration minimum-count alpha keys must be positive")
-        if count < 0:
-            raise ValueError("calibration minimum counts must be non-negative")
-    return tuple(sorted(pairs, key=lambda item: item[0]))
+        raise ValueError("profiles must be a string or sequence")
+    profiles: list[str] = []
+    for item in items:
+        for part in str(item).split(","):
+            name = part.strip()
+            if name:
+                profiles.append(name)
+    return tuple(profiles) if profiles else None
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Expected a boolean value, got {value!r}")
+
+
+def _nested_get(payload: Mapping[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = payload
+    for key in path:
+        if not isinstance(current, Mapping) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _output_format_from_payload(
+    payload: Mapping[str, Any],
+) -> Literal["csv", "parquet", "both"] | None:
+    output = payload.get("output")
+    if not isinstance(output, Mapping):
+        return None
+    raw = output.get("output_format", output.get("internal_format", output.get("format")))
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    if value not in {"csv", "parquet", "both"}:
+        raise ValueError("output format must be one of {'csv', 'parquet', 'both'}")
+    return value  # type: ignore[return-value]
+
+
+def _label_export_from_payload(
+    payload: Mapping[str, Any],
+) -> Literal["full", "diagnostics"] | None:
+    raw = payload.get("label_export", _nested_get(payload, ("output", "label_export")))
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    if value not in {"full", "diagnostics"}:
+        raise ValueError("label_export must be 'full' or 'diagnostics'")
+    return value  # type: ignore[return-value]
 
 
 def _apply_window_length_policy(protocol_payload: dict[str, Any], payload: Mapping[str, Any]) -> None:

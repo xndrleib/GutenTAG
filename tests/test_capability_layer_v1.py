@@ -9,6 +9,7 @@ from gutenTAG import TSDatasetGenerator
 from gutenTAG.tsgen.capabilities import CapabilityProtocol, run_capability_analysis
 from gutenTAG.tsgen.capabilities.calibration import calibration_status
 from gutenTAG.tsgen.capabilities.protocol import CapabilityProtocol as ProtocolModel
+from gutenTAG.tsgen.capabilities.protocol import capability_run_config_from_yaml
 from gutenTAG.tsgen.capabilities.protocol import protocol_from_yaml
 from gutenTAG.tsgen.capabilities.protocol import window_length_bin
 
@@ -106,7 +107,7 @@ class TestCapabilityLayerV1(unittest.TestCase):
         with self.assertRaises(ValueError):
             ProtocolModel.from_mapping({"alpha_grid": [0.05], "silent_typo": True})
 
-    def test_protocol_yaml_ignores_known_run_level_keys(self) -> None:
+    def test_protocol_yaml_separates_protocol_and_run_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "protocol.yaml"
             path.write_text(
@@ -118,14 +119,25 @@ class TestCapabilityLayerV1(unittest.TestCase):
                         "alpha_grid: [0.1, 0.05]",
                         "output:",
                         "  internal_format: parquet",
+                        "  release_csv: false",
+                        "  allow_parquet_fallback: true",
+                        "label_export: diagnostics",
                     ]
                 ),
                 encoding="utf-8",
             )
 
             protocol = protocol_from_yaml(str(path))
+            run_config = capability_run_config_from_yaml(str(path))
 
             self.assertEqual(protocol.alpha_grid, (0.1, 0.05))
+            self.assertEqual(run_config.protocol.alpha_grid, (0.1, 0.05))
+            self.assertEqual(run_config.profiles, ("admission",))
+            self.assertEqual(run_config.profile_preset, "full_certificate")
+            self.assertEqual(run_config.output_format, "parquet")
+            self.assertFalse(run_config.release_csv)
+            self.assertTrue(run_config.allow_parquet_fallback)
+            self.assertEqual(run_config.label_export, "diagnostics")
 
     def test_protocol_yaml_can_override_calibration_min_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
