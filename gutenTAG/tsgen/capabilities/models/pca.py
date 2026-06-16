@@ -64,7 +64,11 @@ class PCAResidualModel:
 
 
 def _stack(clean_instances: Sequence[np.ndarray]) -> np.ndarray:
-    arrays = [np.asarray(item, dtype=np.float64) for item in clean_instances if np.asarray(item).size]
+    arrays = [
+        np.asarray(item, dtype=np.float64)
+        for item in clean_instances
+        if np.asarray(item).size
+    ]
     return np.vstack(arrays) if arrays else np.empty((0, 0), dtype=np.float64)
 
 

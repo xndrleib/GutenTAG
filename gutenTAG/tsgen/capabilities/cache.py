@@ -88,10 +88,9 @@ class CacheStore:
         metadata = self._read_metadata(profile_name, partition_id)
         if not metadata:
             return False
-        return (
-            metadata.get("status") == "complete"
-            and metadata.get("fingerprint_hash") == _fingerprint_hash(fingerprint)
-        )
+        return metadata.get("status") == "complete" and metadata.get(
+            "fingerprint_hash"
+        ) == _fingerprint_hash(fingerprint)
 
     def get_or_compute_table(
         self,
@@ -104,10 +103,14 @@ class CacheStore:
         """Load a cached table partition or compute and store it."""
 
         path = self.table_path(profile_name, partition_id)
-        if self.resume and path.exists() and self.is_valid(
-            profile_name=profile_name,
-            partition_id=partition_id,
-            fingerprint=fingerprint,
+        if (
+            self.resume
+            and path.exists()
+            and self.is_valid(
+                profile_name=profile_name,
+                partition_id=partition_id,
+                fingerprint=fingerprint,
+            )
         ):
             return pd.read_csv(path, compression="gzip")
         frame = compute()
@@ -159,10 +162,14 @@ class CacheStore:
         """Load a cached JSON partition or compute and store it."""
 
         path = self.json_path(profile_name, partition_id)
-        if self.resume and path.exists() and self.is_valid(
-            profile_name=profile_name,
-            partition_id=partition_id,
-            fingerprint=fingerprint,
+        if (
+            self.resume
+            and path.exists()
+            and self.is_valid(
+                profile_name=profile_name,
+                partition_id=partition_id,
+                fingerprint=fingerprint,
+            )
         ):
             with path.open("r", encoding="utf-8") as handle:
                 return json.load(handle)
@@ -185,22 +192,33 @@ class CacheStore:
     def table_path(self, profile_name: str, partition_id: str) -> Path:
         """Return the cache path for a table partition."""
 
-        return self._partition_dir(profile_name) / f"{_safe_partition_id(partition_id)}.csv.gz"
+        return (
+            self._partition_dir(profile_name)
+            / f"{_safe_partition_id(partition_id)}.csv.gz"
+        )
 
     def json_path(self, profile_name: str, partition_id: str) -> Path:
         """Return the cache path for a JSON partition."""
 
-        return self._partition_dir(profile_name) / f"{_safe_partition_id(partition_id)}.json"
+        return (
+            self._partition_dir(profile_name)
+            / f"{_safe_partition_id(partition_id)}.json"
+        )
 
     def metadata_path(self, profile_name: str, partition_id: str) -> Path:
         """Return the metadata path for a cached partition."""
 
-        return self._partition_dir(profile_name) / f"{_safe_partition_id(partition_id)}.metadata.json"
+        return (
+            self._partition_dir(profile_name)
+            / f"{_safe_partition_id(partition_id)}.metadata.json"
+        )
 
     def _partition_dir(self, profile_name: str) -> Path:
         return self.cache_dir / "profile_partitions" / _safe_partition_id(profile_name)
 
-    def _read_metadata(self, profile_name: str, partition_id: str) -> dict[str, Any] | None:
+    def _read_metadata(
+        self, profile_name: str, partition_id: str
+    ) -> dict[str, Any] | None:
         path = self.metadata_path(profile_name, partition_id)
         if not path.exists():
             return None
@@ -233,7 +251,9 @@ class CacheStore:
         )
 
 
-def _fingerprint_payload(fingerprint: CacheFingerprint | Mapping[str, Any]) -> dict[str, Any]:
+def _fingerprint_payload(
+    fingerprint: CacheFingerprint | Mapping[str, Any],
+) -> dict[str, Any]:
     if isinstance(fingerprint, CacheFingerprint):
         return fingerprint.to_dict()
     return dict(fingerprint)

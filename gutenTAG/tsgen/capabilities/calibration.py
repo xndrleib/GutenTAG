@@ -47,7 +47,9 @@ class EmpiricalCalibrator:
         values = _finite(null.scan_statistics)
         if values.size == 0:
             return float("nan")
-        return float((1 + np.sum(values >= float(observed_scan_stat))) / (len(values) + 1))
+        return float(
+            (1 + np.sum(values >= float(observed_scan_stat))) / (len(values) + 1)
+        )
 
     def scan_threshold(self, null: ScanNull, alpha: float) -> float:
         values = _finite(null.scan_statistics)
@@ -95,7 +97,9 @@ def _recommended_min_count(
     minimum_counts: Sequence[tuple[float, int]] | None = None,
 ) -> int:
     if minimum_counts is not None:
-        for alpha_threshold, count in sorted(minimum_counts, key=lambda item: float(item[0])):
+        for alpha_threshold, count in sorted(
+            minimum_counts, key=lambda item: float(item[0])
+        ):
             if alpha <= float(alpha_threshold):
                 return int(count)
         return 25

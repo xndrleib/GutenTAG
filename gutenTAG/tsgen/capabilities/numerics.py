@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from typing import Iterable, Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -75,7 +75,9 @@ def safe_covariance(values: np.ndarray) -> np.ndarray:
     return cov.reshape(channels, channels)
 
 
-def channel_subsets(channels: int | Sequence[int], max_size: int) -> list[tuple[int, ...]]:
+def channel_subsets(
+    channels: int | Sequence[int], max_size: int
+) -> list[tuple[int, ...]]:
     """Return deterministic channel subsets up to ``max_size``."""
 
     if isinstance(channels, int):
@@ -89,7 +91,9 @@ def channel_subsets(channels: int | Sequence[int], max_size: int) -> list[tuple[
     return subsets
 
 
-def contiguous_windows(length: int, window_length: int, *, max_windows: int, stride_fraction: float) -> list[tuple[int, int]]:
+def contiguous_windows(
+    length: int, window_length: int, *, max_windows: int, stride_fraction: float
+) -> list[tuple[int, int]]:
     """Return a bounded deterministic scan library of contiguous windows."""
 
     n = int(length)
@@ -132,7 +136,9 @@ def context_indices(
     return np.flatnonzero(mask)
 
 
-def segment(values: np.ndarray, start: int, end: int, channels: Sequence[int]) -> np.ndarray:
+def segment(
+    values: np.ndarray, start: int, end: int, channels: Sequence[int]
+) -> np.ndarray:
     """Extract a time/channel segment as a 2D matrix."""
 
     matrix = _as_2d(values)
@@ -148,10 +154,13 @@ def _as_2d(values: np.ndarray) -> np.ndarray:
     return array
 
 
-def finite_float(value: float | np.floating, *, default: float = 0.0) -> float:
+def finite_float(value: object, *, default: float = 0.0) -> float:
     """Normalize non-finite values for CSV/JSON output."""
 
-    number = float(value)
+    try:
+        number = float(cast(Any, value))
+    except (TypeError, ValueError):
+        return float(default)
     return number if math.isfinite(number) else float(default)
 
 
@@ -165,7 +174,9 @@ def bootstrap_ci(
 ) -> tuple[float, float]:
     """Compute a simple percentile bootstrap confidence interval."""
 
-    arr = np.asarray([float(v) for v in values if math.isfinite(float(v))], dtype=np.float64)
+    arr = np.asarray(
+        [float(v) for v in values if math.isfinite(float(v))], dtype=np.float64
+    )
     if arr.size == 0:
         return (float("nan"), float("nan"))
     if arr.size == 1 or int(samples) <= 0:
@@ -188,4 +199,7 @@ def log2_comb(n: int, k: int) -> float:
     k_i = int(k)
     if k_i < 0 or k_i > n_i:
         return 0.0
-    return float((math.lgamma(n_i + 1) - math.lgamma(k_i + 1) - math.lgamma(n_i - k_i + 1)) / math.log(2.0))
+    return float(
+        (math.lgamma(n_i + 1) - math.lgamma(k_i + 1) - math.lgamma(n_i - k_i + 1))
+        / math.log(2.0)
+    )

@@ -8,7 +8,13 @@ import numpy as np
 import pandas as pd
 
 from ..array_store import ArrayStore
-from ..dataset import DatasetIndex, EventGroup, InstanceRecord, event_uid, read_timeseries_csv
+from ..dataset import (
+    DatasetIndex,
+    EventGroup,
+    InstanceRecord,
+    event_uid,
+    read_timeseries_csv,
+)
 from ..numerics import finite_float, segment
 from ..protocol import CapabilityProtocol
 from .operators import operator_family, repair_segment
@@ -32,8 +38,16 @@ def compute_repair_profiles(
     del protocol
     rows: list[dict[str, object]] = []
     for instance in dataset.instances:
-        clean = arrays.get(instance, "clean") if arrays is not None else read_timeseries_csv(instance.clean_path)
-        anomalous = arrays.get(instance, "anomalous") if arrays is not None else read_timeseries_csv(instance.anomalous_path)
+        clean = (
+            arrays.get(instance, "clean")
+            if arrays is not None
+            else read_timeseries_csv(instance.clean_path)
+        )
+        anomalous = (
+            arrays.get(instance, "anomalous")
+            if arrays is not None
+            else read_timeseries_csv(instance.anomalous_path)
+        )
         for group in instance.event_groups:
             rows.append(_repair_row(instance, group, clean, anomalous))
     return RepairProfileResult(repair_profile=pd.DataFrame(rows))
@@ -81,7 +95,13 @@ def _repair_row(
 
 
 def _repair_channels(instance: InstanceRecord, group: EventGroup) -> tuple[int, ...]:
-    channels = tuple(sorted(set(group.group_channels) | set(group.context_channels) | set(group.intervention_channels)))
+    channels = tuple(
+        sorted(
+            set(group.group_channels)
+            | set(group.context_channels)
+            | set(group.intervention_channels)
+        )
+    )
     if channels:
         return channels
     return tuple(range(instance.channels))
@@ -90,7 +110,16 @@ def _repair_channels(instance: InstanceRecord, group: EventGroup) -> tuple[int, 
 def _rmse(left: np.ndarray, right: np.ndarray) -> float:
     if left.size == 0 or right.size == 0:
         return 0.0
-    return float(np.sqrt(np.mean(np.square(np.asarray(left, dtype=np.float64) - np.asarray(right, dtype=np.float64)))))
+    return float(
+        np.sqrt(
+            np.mean(
+                np.square(
+                    np.asarray(left, dtype=np.float64)
+                    - np.asarray(right, dtype=np.float64)
+                )
+            )
+        )
+    )
 
 
 def _repair_status(raw_rmse: float, repair_gain: float) -> str:

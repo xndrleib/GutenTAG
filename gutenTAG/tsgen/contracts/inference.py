@@ -28,9 +28,21 @@ def infer_legacy_genotype(
     has_required_roles = _has_required_channel_roles(group, contract)
     if contract is not None and not has_required_roles:
         warnings.extend(["missing_channel_roles", "relation_claim_not_inferred"])
-    violated = contract.intended_constraints if contract is not None and has_required_roles else ("legacy.channel_event",)
-    canonical_witnesses = contract.canonical_witnesses if contract is not None and has_required_roles else ("energy_delta", "mean_delta")
-    contract_id = contract.contract_id if contract is not None and has_required_roles else "synthgen.contract.legacy_channel_event.v1"
+    violated = (
+        contract.intended_constraints
+        if contract is not None and has_required_roles
+        else ("legacy.channel_event",)
+    )
+    canonical_witnesses = (
+        contract.canonical_witnesses
+        if contract is not None and has_required_roles
+        else ("energy_delta", "mean_delta")
+    )
+    contract_id = (
+        contract.contract_id
+        if contract is not None and has_required_roles
+        else "synthgen.contract.legacy_channel_event.v1"
+    )
     return ProblemGenotype(
         version="synthgen.problem_genotype.v1",
         genotype_id=_genotype_id(instance, group, contract_id),
@@ -52,7 +64,9 @@ def infer_legacy_genotype(
         },
         constraints={
             "violated": violated,
-            "forbidden_shortcuts": contract.forbidden_shortcuts if contract is not None else (),
+            "forbidden_shortcuts": (
+                contract.forbidden_shortcuts if contract is not None else ()
+            ),
             "canonical_witnesses": canonical_witnesses,
         },
         support={
@@ -74,10 +88,14 @@ def infer_legacy_genotype(
     )
 
 
-def _has_required_channel_roles(group: EventGroup, contract: AnomalyContract | None) -> bool:
+def _has_required_channel_roles(
+    group: EventGroup, contract: AnomalyContract | None
+) -> bool:
     if contract is None:
         return False
-    min_projection = int(contract.channel_role_policy.get("canonical_min_projection_size", 1))
+    min_projection = int(
+        contract.channel_role_policy.get("canonical_min_projection_size", 1)
+    )
     context_min = int(contract.channel_role_policy.get("context_min", 0))
     intervention_min = int(contract.channel_role_policy.get("intervention_min", 1))
     return (

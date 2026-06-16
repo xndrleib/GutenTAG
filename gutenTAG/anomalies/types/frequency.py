@@ -15,6 +15,18 @@ class AnomalyFrequencyParameters:
     frequency_factor: float = 1.0
 
 
+@dataclass(frozen=True)
+class _BeatWarpContext:
+    """Prepared local ECG residual context for beat-aware frequency warping."""
+
+    clean_window: np.ndarray
+    baseline: np.ndarray
+    residual: np.ndarray
+    local_peaks: np.ndarray
+    expected_period: Optional[float]
+    length: int
+
+
 class AnomalyFrequency(BaseAnomaly):
     def __init__(self, parameters: AnomalyFrequencyParameters):
         super().__init__()
@@ -228,65 +240,102 @@ class AnomalyFrequency(BaseAnomaly):
             return np.array(reference[left:right], dtype=np.float64, copy=True)
 
         clean_window = np.asarray(reference[left:right], dtype=np.float64)
+        context = cls._beat_warp_context(ecg, clean_window)
+        desired_peaks = cls._desired_peak_positions(context, frequency_factor)
+        if desired_peaks is None:
+            return cls._fallback_beat_warp(context, frequency_factor)
+        return cls._warp_residual_with_peak_anchors(context, desired_peaks)
+
+    @classmethod
+    def _beat_warp_context(cls, ecg: ECG, clean_window: np.ndarray) -> _BeatWarpContext:
         expected_period = cls._expected_period_samples(getattr(ecg, "frequency", None))
         baseline = cls._smooth_baseline(clean_window, expected_period)
         residual = clean_window - baseline
         local_peaks = cls._detect_ecg_peaks(residual, expected_period).astype(
             np.float64
         )
-        local_peaks = local_peaks[
-            (local_peaks > 1.0) & (local_peaks < float(length - 2))
-        ]
-        if local_peaks.size < 2:
-            return cls._warp_reference_window(
-                full_reference=clean_window,
-                start=0,
-                end=length,
-                frequency_factor=frequency_factor,
-                expected_period=expected_period,
-            )
+        length = int(clean_window.shape[0])
+        local_peaks = cls._interior_peak_positions(local_peaks, length)
+        return _BeatWarpContext(
+            clean_window=clean_window,
+            baseline=baseline,
+            residual=residual,
+            local_peaks=local_peaks,
+            expected_period=expected_period,
+            length=length,
+        )
 
-        midpoint = 0.5 * float(length - 1)
+    @staticmethod
+    def _interior_peak_positions(peaks: np.ndarray, length: int) -> np.ndarray:
+        return peaks[(peaks > 1.0) & (peaks < float(length - 2))]
+
+    @classmethod
+    def _desired_peak_positions(
+        cls,
+        context: _BeatWarpContext,
+        frequency_factor: float,
+    ) -> np.ndarray | None:
+        if context.local_peaks.size < 2:
+            return None
+        midpoint = 0.5 * float(context.length - 1)
         requested_scale = 1.0 / float(np.clip(frequency_factor, 0.35, 3.5))
         scale = cls._cap_anchor_scale(
-            peaks=local_peaks,
+            peaks=context.local_peaks,
             midpoint=midpoint,
-            length=length,
+            length=context.length,
             requested_scale=requested_scale,
         )
-        desired_peak_positions = midpoint + scale * (local_peaks - midpoint)
-        desired_peak_positions = np.maximum.accumulate(desired_peak_positions)
-        if np.any(np.diff(desired_peak_positions) < 1e-3):
-            return cls._warp_reference_window(
-                full_reference=clean_window,
-                start=0,
-                end=length,
-                frequency_factor=frequency_factor,
-                expected_period=expected_period,
-            )
+        desired_peaks = midpoint + scale * (context.local_peaks - midpoint)
+        desired_peaks = np.maximum.accumulate(desired_peaks)
+        if np.any(np.diff(desired_peaks) < 1e-3):
+            return None
+        return desired_peaks
 
+    @classmethod
+    def _fallback_beat_warp(
+        cls,
+        context: _BeatWarpContext,
+        frequency_factor: float,
+    ) -> np.ndarray:
+        return cls._warp_reference_window(
+            full_reference=context.clean_window,
+            start=0,
+            end=context.length,
+            frequency_factor=frequency_factor,
+            expected_period=context.expected_period,
+        )
+
+    @staticmethod
+    def _warp_residual_with_peak_anchors(
+        context: _BeatWarpContext,
+        desired_peak_positions: np.ndarray,
+    ) -> np.ndarray:
         source_anchors = np.concatenate(
-            ([0.0], local_peaks.astype(np.float64), [float(length - 1)])
+            ([0.0], context.local_peaks.astype(np.float64), [float(context.length - 1)])
         )
         target_anchors = np.concatenate(
-            ([0.0], desired_peak_positions.astype(np.float64), [float(length - 1)])
+            (
+                [0.0],
+                desired_peak_positions.astype(np.float64),
+                [float(context.length - 1)],
+            )
         )
-        output_positions = np.arange(length, dtype=np.float64)
+        output_positions = np.arange(context.length, dtype=np.float64)
         source_positions = np.interp(output_positions, target_anchors, source_anchors)
         warped_residual = np.interp(
             source_positions,
-            np.arange(length, dtype=np.float64),
-            residual,
+            np.arange(context.length, dtype=np.float64),
+            context.residual,
         ).astype(np.float64)
-        residual_center = float(np.median(residual))
+        residual_center = float(np.median(context.residual))
         warped_residual -= float(np.median(warped_residual))
         warped_residual += residual_center
-        residual_scale = float(np.std(residual))
+        residual_scale = float(np.std(context.residual))
         warped_scale = float(np.std(warped_residual))
         if residual_scale > 1e-8 and warped_scale > 1e-8:
             warped_residual *= residual_scale / warped_scale
-        warped = baseline + warped_residual
-        warped += float(np.mean(clean_window) - np.mean(warped))
+        warped = context.baseline + warped_residual
+        warped += float(np.mean(context.clean_window) - np.mean(warped))
         return warped.astype(np.float64, copy=False)
 
     @staticmethod

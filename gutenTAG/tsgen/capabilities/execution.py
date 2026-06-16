@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -15,7 +15,6 @@ from .hashes import code_version_hash, dataset_content_hash, protocol_hash
 from .output import OutputWriter
 from .protocol import CapabilityProtocol
 from .windows import WindowLibrary
-
 
 SUPPORTED_PROFILES: tuple[str, ...] = (
     "observability",
@@ -83,7 +82,7 @@ def build_run_context(
     cache_dir: Path | None = None,
     materialize_arrays: bool = False,
     resume: bool = True,
-    output_format: str = "csv",
+    output_format: Literal["csv", "parquet", "both"] = "csv",
     release_csv: bool = True,
     allow_parquet_fallback: bool = False,
     label_export: Literal["full", "diagnostics"] = "full",
@@ -95,7 +94,9 @@ def build_run_context(
         profiles=profiles,
         profile_preset=profile_preset,
     )
-    active_cache_dir = cache_dir if cache_dir is not None else output_dir.parent / "cache"
+    active_cache_dir = (
+        cache_dir if cache_dir is not None else output_dir.parent / "cache"
+    )
     run_manifest = _build_run_manifest(
         dataset=dataset,
         protocol=protocol,
@@ -110,7 +111,7 @@ def build_run_context(
     cache = CacheStore(
         cache_dir=active_cache_dir,
         resume=resume,
-        run_fingerprint=run_manifest["fingerprints"],
+        run_fingerprint=cast(Mapping[str, Any], run_manifest["fingerprints"]),
     )
     arrays = ArrayStore(cache_dir=active_cache_dir, mmap=True, lazy_materialize=True)
     if materialize_arrays:

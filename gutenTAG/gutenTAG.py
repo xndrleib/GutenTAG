@@ -5,7 +5,7 @@ import os
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional, Union, Callable, Sequence, Tuple, Any
+from typing import List, Dict, Optional, Union, Callable, Sequence, Tuple, Any, cast
 
 import yaml
 from joblib import Parallel, delayed
@@ -156,14 +156,15 @@ class GutenTAG:
             return_timeseries=return_timeseries,
         )
         with tqdm_joblib(tqdm(desc="Generating datasets", total=len(self._timeseries))):
-            results: List[
-                Tuple[Dict, Dict[str, Any], Optional[List[ExtTimeSeries]]]
-            ] = Parallel(n_jobs=n_jobs)(
-                delayed(self.internal_generate)(ctx, ts, config)
-                for ts, config in zip(self._timeseries, self._overview.datasets)
+            results = cast(
+                List[Tuple[Dict, Dict[str, Any], Optional[List[ExtTimeSeries]]]],
+                Parallel(n_jobs=n_jobs)(
+                    delayed(self.internal_generate)(ctx, ts, config)
+                    for ts, config in zip(self._timeseries, self._overview.datasets)
+                ),
             )
         configs, data_dicts, timeseries_datasets = tuple(zip(*results))
-        self._overview.datasets = configs
+        self._overview.datasets = list(configs)
 
         # finalize
         if folder is not None:
@@ -171,7 +172,7 @@ class GutenTAG:
         finalize_ctx = AddOnFinalizeContext(
             overview=self._overview, plot=plot, output_folder=output_folder
         )
-        finalize_ctx.fill_store(data_dicts)
+        finalize_ctx.fill_store(list(data_dicts))
         for addon in tqdm(addons, desc="Finalizing addons", total=len(addons)):
             addon.finalize(finalize_ctx)
 

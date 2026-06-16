@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping, cast
 
 import matplotlib
 
@@ -40,7 +40,7 @@ def plot_relation_scatter(
     anomalous_support = anomalous[start:end][:, [x_channel, y_channel]]
     left, right = _zoom_bounds(clean.shape[0], start, end)
     context_mask = np.ones(right - left, dtype=bool)
-    context_mask[max(0, start - left):max(0, end - left)] = False
+    context_mask[max(0, start - left) : max(0, end - left)] = False
     clean_context = clean[left:right][context_mask][:, [x_channel, y_channel]]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,8 +100,12 @@ def plot_rolling_correlation_panel(
     left, right = _zoom_bounds(clean.shape[0], start, end)
     window = _rolling_window_size(start, end, right - left)
     x_channel, y_channel = channels[:2]
-    clean_corr = _rolling_corr(clean[left:right, x_channel], clean[left:right, y_channel], window)
-    anom_corr = _rolling_corr(anomalous[left:right, x_channel], anomalous[left:right, y_channel], window)
+    clean_corr = _rolling_corr(
+        clean[left:right, x_channel], clean[left:right, y_channel], window
+    )
+    anom_corr = _rolling_corr(
+        anomalous[left:right, x_channel], anomalous[left:right, y_channel], window
+    )
     time = np.arange(left, right)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,7 +175,12 @@ def plot_pca_residual_panel(
 def _pca_residual(values: np.ndarray, fit_data: np.ndarray) -> np.ndarray:
     matrix = np.asarray(values, dtype=np.float64)
     reference = np.asarray(fit_data, dtype=np.float64)
-    if matrix.ndim != 2 or reference.ndim != 2 or matrix.size == 0 or reference.size == 0:
+    if (
+        matrix.ndim != 2
+        or reference.ndim != 2
+        or matrix.size == 0
+        or reference.size == 0
+    ):
         return np.asarray([], dtype=np.float64)
     center = np.mean(reference, axis=0, keepdims=True)
     centered = reference - center
@@ -186,7 +195,9 @@ def _pca_residual(values: np.ndarray, fit_data: np.ndarray) -> np.ndarray:
     return np.sqrt(np.mean(np.square(matrix - reconstructed), axis=1))
 
 
-def _rolling_corr(x_values: np.ndarray, y_values: np.ndarray, window: int) -> np.ndarray:
+def _rolling_corr(
+    x_values: np.ndarray, y_values: np.ndarray, window: int
+) -> np.ndarray:
     x = np.asarray(x_values, dtype=np.float64)
     y = np.asarray(y_values, dtype=np.float64)
     result = np.zeros_like(x, dtype=np.float64)
@@ -225,13 +236,17 @@ def _zoom_bounds(length: int, start: int, end: int) -> tuple[int, int]:
     return left, right
 
 
-def _relation_channels(event: Mapping[str, object], channel_count: int) -> tuple[int, ...]:
+def _relation_channels(
+    event: Mapping[str, object], channel_count: int
+) -> tuple[int, ...]:
     raw_channels = (
         _parse_channels(event.get("group_channels"))
         or _parse_channels(event.get("context_channels"))
         or _parse_channels(event.get("intervention_channels"))
     )
-    channels = tuple(channel for channel in raw_channels if 0 <= channel < channel_count)
+    channels = tuple(
+        channel for channel in raw_channels if 0 <= channel < channel_count
+    )
     if len(channels) >= 2:
         return channels
     return tuple(range(min(channel_count, 2)))
@@ -255,7 +270,7 @@ def _parse_channels(value: object) -> tuple[int, ...]:
 
 def _clip_int(value: object, low: int, high: int) -> int:
     try:
-        number = int(value)
+        number = int(cast(Any, value))
     except (TypeError, ValueError):
         number = int(low)
     return max(int(low), min(int(high), number))

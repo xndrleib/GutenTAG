@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -36,7 +36,9 @@ class RollingStats:
 
         starts_arr, ends_arr, lengths = self._intervals(starts, ends)
         channel_arr = self._channels(channels)
-        sums = self.csum[ends_arr][:, channel_arr] - self.csum[starts_arr][:, channel_arr]
+        sums = (
+            self.csum[ends_arr][:, channel_arr] - self.csum[starts_arr][:, channel_arr]
+        )
         result = sums / lengths[:, None]
         return _squeeze_channel_result(result, channels)
 
@@ -50,8 +52,13 @@ class RollingStats:
 
         starts_arr, ends_arr, lengths = self._intervals(starts, ends)
         channel_arr = self._channels(channels)
-        sums = self.csum[ends_arr][:, channel_arr] - self.csum[starts_arr][:, channel_arr]
-        sums2 = self.csum2[ends_arr][:, channel_arr] - self.csum2[starts_arr][:, channel_arr]
+        sums = (
+            self.csum[ends_arr][:, channel_arr] - self.csum[starts_arr][:, channel_arr]
+        )
+        sums2 = (
+            self.csum2[ends_arr][:, channel_arr]
+            - self.csum2[starts_arr][:, channel_arr]
+        )
         means = sums / lengths[:, None]
         variances = np.maximum((sums2 / lengths[:, None]) - means * means, 0.0)
         return _squeeze_channel_result(variances, channels)
@@ -100,7 +107,10 @@ class RollingStats:
 
         starts_arr, ends_arr, _ = self._intervals(starts, ends)
         channel_arr = self._channels(channels)
-        sums2 = self.csum2[ends_arr][:, channel_arr] - self.csum2[starts_arr][:, channel_arr]
+        sums2 = (
+            self.csum2[ends_arr][:, channel_arr]
+            - self.csum2[starts_arr][:, channel_arr]
+        )
         return np.sum(sums2, axis=1)
 
     def _intervals(
@@ -116,13 +126,17 @@ class RollingStats:
             ends_arr = ends_arr.reshape(1)
         if starts_arr.shape != ends_arr.shape:
             raise ValueError("starts and ends must have the same shape")
-        if np.any(starts_arr < 0) or np.any(ends_arr > len(self.series)) or np.any(ends_arr <= starts_arr):
+        if (
+            np.any(starts_arr < 0)
+            or np.any(ends_arr > len(self.series))
+            or np.any(ends_arr <= starts_arr)
+        ):
             raise ValueError("Invalid interval bounds")
         return starts_arr, ends_arr, (ends_arr - starts_arr).astype(np.float64)
 
     def _channels(self, channels: int | Sequence[int] | np.ndarray) -> np.ndarray:
         if np.isscalar(channels):
-            return np.asarray([self._channel(int(channels))], dtype=np.int64)
+            return np.asarray([self._channel(int(cast(Any, channels)))], dtype=np.int64)
         channel_arr = np.asarray(channels, dtype=np.int64)
         if channel_arr.ndim != 1:
             raise ValueError("channels must be a scalar or a 1D sequence")

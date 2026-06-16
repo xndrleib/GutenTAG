@@ -10,19 +10,40 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
-from .capabilities.dataset import DatasetIndex, InstanceRecord, discover_dataset, event_uid, load_json
+from .capabilities.dataset import (
+    DatasetIndex,
+    EventGroup,
+    InstanceRecord,
+    discover_dataset,
+    event_uid,
+    load_json,
+)
 from .io import sanitize_json_value, write_json
-from .labels.annotation_channels import CHANNEL_ORDER, annotation_channel_manifest, build_annotation_channels
-
+from .labels.annotation_channels import (
+    CHANNEL_ORDER,
+    annotation_channel_manifest,
+    build_annotation_channels,
+)
 
 SIDECAR_VERSION = "synthgen.generator_sidecars.v12.2"
 LAW_REPLICATE_VERSION = "synthgen.law_replicates.v12.2"
+
+
+@dataclass(frozen=True)
+class _LawReplicateConfig:
+    """Resolved law-level replicate sidecar configuration."""
+
+    enabled: bool
+    output_split: str
+    paired_seed_policy: str
+    requested_replicas: int | None
 
 
 def write_v12_generator_sidecars(
@@ -71,7 +92,9 @@ def write_dataset_annotation_channels(
     labels_dir = dataset.root / "labels"
     labels_dir.mkdir(parents=True, exist_ok=True)
     selected_channels = _selected_annotation_channels(config)
-    frames_by_channel: dict[str, list[pd.DataFrame]] = {name: [] for name in selected_channels}
+    frames_by_channel: dict[str, list[pd.DataFrame]] = {
+        name: [] for name in selected_channels
+    }
     for instance in dataset.instances:
         events = load_json(instance.events_path)
         channels = build_annotation_channels(
@@ -81,7 +104,9 @@ def write_dataset_annotation_channels(
         )
         for name in selected_channels:
             channel = channels[name]
-            frames_by_channel[name].append(_flatten_label_table(instance, channel.values, channel.columns))
+            frames_by_channel[name].append(
+                _flatten_label_table(instance, channel.values, channel.columns)
+            )
 
     table_paths: dict[str, str] = {}
     table_hashes: dict[str, str] = {}
@@ -108,7 +133,9 @@ def write_dataset_annotation_channels(
             "table_hashes": table_hashes,
             "row_counts": row_counts,
             "instance_count": len(dataset.instances),
-            "event_group_count": int(sum(len(instance.event_groups) for instance in dataset.instances)),
+            "event_group_count": int(
+                sum(len(instance.event_groups) for instance in dataset.instances)
+            ),
         }
     )
     manifest_path = labels_dir / "annotation_channel_manifest.json"
@@ -126,88 +153,188 @@ def write_law_level_replicates(
 ) -> dict[str, Any]:
     """Write law-level replicate records derived from event groups."""
 
+    resolved = _law_replicate_config(config)
+    metadata_dir, law_dir = _prepare_law_replicate_dirs(dataset.root, resolved)
+    if not resolved.enabled:
+        return _disabled_law_replicate_manifest(resolved)
+    event_metadata = _read_event_metadata(metadata_dir / "events.jsonl")
+    records, replicate_indices = _law_replicate_records(
+        dataset,
+        event_metadata=event_metadata,
+        config=resolved,
+    )
+    return _write_law_replicate_outputs(
+        dataset=dataset,
+        metadata_dir=metadata_dir,
+        law_dir=law_dir,
+        records=records,
+        replicate_indices=replicate_indices,
+        config=resolved,
+    )
+
+
+def _law_replicate_config(config: Mapping[str, Any] | None) -> _LawReplicateConfig:
     cfg = dict(config or {})
-    enabled = bool(cfg.get("enabled", True))
-    output_split = str(cfg.get("output_split", "law_replicates"))
-    paired_seed_policy = str(cfg.get("paired_seed_policy", "same_base_parameters"))
     replicas_per_genotype = cfg.get("replicas_per_genotype")
-    requested_replicas = int(replicas_per_genotype) if replicas_per_genotype is not None else None
-    metadata_dir = dataset.root / "metadata"
-    law_dir = dataset.root / output_split
+    requested_replicas = (
+        int(replicas_per_genotype) if replicas_per_genotype is not None else None
+    )
+    return _LawReplicateConfig(
+        enabled=bool(cfg.get("enabled", True)),
+        output_split=str(cfg.get("output_split", "law_replicates")),
+        paired_seed_policy=str(cfg.get("paired_seed_policy", "same_base_parameters")),
+        requested_replicas=requested_replicas,
+    )
+
+
+def _prepare_law_replicate_dirs(
+    root: Path,
+    config: _LawReplicateConfig,
+) -> tuple[Path, Path]:
+    metadata_dir = root / "metadata"
+    law_dir = root / config.output_split
     metadata_dir.mkdir(parents=True, exist_ok=True)
     law_dir.mkdir(parents=True, exist_ok=True)
-    if not enabled:
-        return {
-            "law_level_replicates_version": LAW_REPLICATE_VERSION,
-            "enabled": False,
-            "output_split": output_split,
-            "paired_seed_policy": paired_seed_policy,
-            "replicas_per_genotype_requested": requested_replicas,
-            "replicate_count": 0,
-            "genotype_count": 0,
-        }
-    event_metadata = _read_event_metadata(metadata_dir / "events.jsonl")
+    return metadata_dir, law_dir
+
+
+def _disabled_law_replicate_manifest(
+    config: _LawReplicateConfig,
+) -> dict[str, Any]:
+    return {
+        "law_level_replicates_version": LAW_REPLICATE_VERSION,
+        "enabled": False,
+        "output_split": config.output_split,
+        "paired_seed_policy": config.paired_seed_policy,
+        "replicas_per_genotype_requested": config.requested_replicas,
+        "replicate_count": 0,
+        "genotype_count": 0,
+    }
+
+
+def _law_replicate_records(
+    dataset: DatasetIndex,
+    *,
+    event_metadata: Mapping[str, Mapping[str, Any]],
+    config: _LawReplicateConfig,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     replicate_indices: dict[str, int] = {}
     records: list[dict[str, Any]] = []
     for instance in dataset.instances:
         for group in instance.event_groups:
             event_id = event_uid(instance, group)
             metadata = event_metadata.get(event_id, {})
-            genotype_id = str(metadata.get("genotype_id", f"genotype:{instance.variant_id}:unknown:v12"))
+            genotype_id = _law_genotype_id(instance, metadata)
             replicate_index = replicate_indices.get(genotype_id, 0)
-            if requested_replicas is not None and replicate_index >= requested_replicas:
+            if _law_replicate_limit_reached(replicate_index, config):
                 continue
             replicate_indices[genotype_id] = replicate_index + 1
             records.append(
-                {
-                    "law_level_replicate_version": LAW_REPLICATE_VERSION,
-                    "replicate_id": f"law:{event_id}",
-                    "replicate_index": replicate_index,
-                    "replicate_source": "generated_paired_event_window",
-                    "output_split": output_split,
-                    "paired_seed_policy": paired_seed_policy,
-                    "event_id": event_id,
-                    "genotype_id": genotype_id,
-                    "contract_id": metadata.get("contract_id"),
-                    "requested_effect_id": metadata.get("requested_effect_id"),
-                    "variant_id": instance.variant_id,
-                    "base_oscillation": instance.base_oscillation,
-                    "anomaly_type": group.anomaly_type,
-                    "split": instance.split,
-                    "instance_id": instance.instance_id,
-                    "group_id": group.group_id,
-                    "clean_path": _relative_path(instance.clean_path, dataset.root),
-                    "anomalous_path": _relative_path(instance.anomalous_path, dataset.root),
-                    "events_path": _relative_path(instance.events_path, dataset.root),
-                    "support_start": int(group.start),
-                    "support_end": int(group.end),
-                    "source_start": int(group.source_start),
-                    "source_end": int(group.source_end),
-                    "intervention_channels": list(group.intervention_channels),
-                    "context_channels": list(group.context_channels),
-                    "group_channels": list(group.group_channels),
-                    "semantic_scope": group.semantic_scope,
-                    "constraint_tag": group.constraint_tag,
-                }
+                _law_replicate_record(
+                    dataset=dataset,
+                    instance=instance,
+                    group=group,
+                    event_id=event_id,
+                    genotype_id=genotype_id,
+                    replicate_index=replicate_index,
+                    metadata=metadata,
+                    config=config,
+                )
             )
+    return (
+        sorted(records, key=lambda item: str(item["replicate_id"])),
+        replicate_indices,
+    )
 
-    records = sorted(records, key=lambda item: str(item["replicate_id"]))
+
+def _law_genotype_id(
+    instance: InstanceRecord,
+    metadata: Mapping[str, Any],
+) -> str:
+    fallback = f"genotype:{instance.variant_id}:unknown:v12"
+    return str(metadata.get("genotype_id", fallback))
+
+
+def _law_replicate_limit_reached(
+    replicate_index: int,
+    config: _LawReplicateConfig,
+) -> bool:
+    return (
+        config.requested_replicas is not None
+        and replicate_index >= config.requested_replicas
+    )
+
+
+def _law_replicate_record(
+    *,
+    dataset: DatasetIndex,
+    instance: InstanceRecord,
+    group: EventGroup,
+    event_id: str,
+    genotype_id: str,
+    replicate_index: int,
+    metadata: Mapping[str, Any],
+    config: _LawReplicateConfig,
+) -> dict[str, Any]:
+    return {
+        "law_level_replicate_version": LAW_REPLICATE_VERSION,
+        "replicate_id": f"law:{event_id}",
+        "replicate_index": replicate_index,
+        "replicate_source": "generated_paired_event_window",
+        "output_split": config.output_split,
+        "paired_seed_policy": config.paired_seed_policy,
+        "event_id": event_id,
+        "genotype_id": genotype_id,
+        "contract_id": metadata.get("contract_id"),
+        "requested_effect_id": metadata.get("requested_effect_id"),
+        "variant_id": instance.variant_id,
+        "base_oscillation": instance.base_oscillation,
+        "anomaly_type": group.anomaly_type,
+        "split": instance.split,
+        "instance_id": instance.instance_id,
+        "group_id": group.group_id,
+        "clean_path": _relative_path(instance.clean_path, dataset.root),
+        "anomalous_path": _relative_path(instance.anomalous_path, dataset.root),
+        "events_path": _relative_path(instance.events_path, dataset.root),
+        "support_start": int(group.start),
+        "support_end": int(group.end),
+        "source_start": int(group.source_start),
+        "source_end": int(group.source_end),
+        "intervention_channels": list(group.intervention_channels),
+        "context_channels": list(group.context_channels),
+        "group_channels": list(group.group_channels),
+        "semantic_scope": group.semantic_scope,
+        "constraint_tag": group.constraint_tag,
+    }
+
+
+def _write_law_replicate_outputs(
+    *,
+    dataset: DatasetIndex,
+    metadata_dir: Path,
+    law_dir: Path,
+    records: Sequence[Mapping[str, Any]],
+    replicate_indices: Mapping[str, int],
+    config: _LawReplicateConfig,
+) -> dict[str, Any]:
     registry_path = metadata_dir / "law_level_replicates.jsonl"
     table_path = law_dir / "law_level_replicates.csv"
     _write_jsonl(registry_path, records)
     _write_replicate_csv(table_path, records)
     per_genotype = {
         genotype_id: int(count)
-        for genotype_id, count in sorted(replicate_indices.items(), key=lambda item: item[0])
+        for genotype_id, count in sorted(
+            replicate_indices.items(), key=lambda item: item[0]
+        )
     }
     counts = list(per_genotype.values())
     return {
         "law_level_replicates_version": LAW_REPLICATE_VERSION,
         "enabled": True,
-        "output_split": output_split,
-        "paired_seed_policy": paired_seed_policy,
+        "output_split": config.output_split,
+        "paired_seed_policy": config.paired_seed_policy,
         "replicate_source": "generated_paired_event_window",
-        "replicas_per_genotype_requested": requested_replicas,
+        "replicas_per_genotype_requested": config.requested_replicas,
         "replicate_registry_path": _relative_path(registry_path, dataset.root),
         "replicate_table_path": _relative_path(table_path, dataset.root),
         "replicate_registry_hash": _file_hash(registry_path),
@@ -238,7 +365,11 @@ def _selected_annotation_channels(config: Mapping[str, Any] | None) -> tuple[str
 def _expand_annotation_channel(name: str) -> tuple[str, ...]:
     normalized = name.strip().replace("-", "_")
     aliases = {
-        "oracle": ("labels_oracle_any", "labels_oracle_intervention", "labels_oracle_context"),
+        "oracle": (
+            "labels_oracle_any",
+            "labels_oracle_intervention",
+            "labels_oracle_context",
+        ),
         "oracle_any": ("labels_oracle_any",),
         "oracle_context": ("labels_oracle_context",),
         "event_only": ("labels_event_only",),
@@ -264,7 +395,7 @@ def _flatten_label_table(
     columns: Sequence[str],
 ) -> pd.DataFrame:
     matrix = np.asarray(values, dtype=np.int8)
-    frame = pd.DataFrame(matrix, columns=list(columns))
+    frame = pd.DataFrame(matrix, columns=pd.Index(list(columns)))
     frame.insert(0, "time_index", np.arange(instance.length, dtype=int))
     frame.insert(0, "instance_id", instance.instance_id)
     frame.insert(0, "split", instance.split)
@@ -274,7 +405,9 @@ def _flatten_label_table(
 
 def _concat_frames(frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
     materialized = [frame for frame in frames if not frame.empty]
-    return pd.concat(materialized, ignore_index=True) if materialized else pd.DataFrame()
+    return (
+        pd.concat(materialized, ignore_index=True) if materialized else pd.DataFrame()
+    )
 
 
 def _read_event_metadata(path: Path) -> dict[str, Mapping[str, Any]]:

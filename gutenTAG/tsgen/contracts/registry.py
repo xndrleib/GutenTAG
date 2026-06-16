@@ -26,12 +26,14 @@ class ContractRegistry:
         root = resources.files(package)
         contracts = []
         for resource in sorted(root.iterdir(), key=lambda item: item.name):
-            if resource.suffix not in {".yaml", ".yml"}:
+            if not resource.name.endswith((".yaml", ".yml")):
                 continue
             with resource.open("r", encoding="utf-8") as handle:
                 payload = yaml.safe_load(handle) or {}
             if not isinstance(payload, Mapping):
-                raise ValueError(f"Contract resource must contain a mapping: {resource}")
+                raise ValueError(
+                    f"Contract resource must contain a mapping: {resource}"
+                )
             contracts.append(AnomalyContract.from_mapping(payload))
         return cls(contracts)
 

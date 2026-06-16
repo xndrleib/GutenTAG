@@ -8,7 +8,7 @@ runtime bounds rather than hard-coded QC pass/fail thresholds.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, cast
 
 
 @dataclass(frozen=True)
@@ -69,29 +69,46 @@ class CapabilityProtocol:
         if unknown:
             raise ValueError(f"Unknown capability protocol keys: {unknown}")
         normalized: dict[str, Any] = dict(payload)
-        for key in ["delta_grid", "alpha_grid", "witness_families", "detection_witnesses", "window_length_bins"]:
+        for key in [
+            "delta_grid",
+            "alpha_grid",
+            "witness_families",
+            "detection_witnesses",
+            "window_length_bins",
+        ]:
             if key in normalized and not isinstance(normalized[key], tuple):
                 normalized[key] = tuple(normalized[key])
         if "calibration_min_clean_scan_count_for_alpha" in normalized:
-            normalized["calibration_min_clean_scan_count_for_alpha"] = _normalize_min_count_table(
-                normalized["calibration_min_clean_scan_count_for_alpha"]
+            normalized["calibration_min_clean_scan_count_for_alpha"] = (
+                _normalize_min_count_table(
+                    normalized["calibration_min_clean_scan_count_for_alpha"]
+                )
             )
         if "window_length_policy_mode" in normalized:
             mode = str(normalized["window_length_policy_mode"]).lower()
             if mode not in {"exact", "binned"}:
-                raise ValueError("window_length_policy_mode must be 'exact' or 'binned'")
+                raise ValueError(
+                    "window_length_policy_mode must be 'exact' or 'binned'"
+                )
             normalized["window_length_policy_mode"] = mode
         if "window_length_bins" in normalized:
-            bins = tuple(sorted({int(item) for item in normalized["window_length_bins"]}))
+            bins = tuple(
+                sorted({int(item) for item in normalized["window_length_bins"]})
+            )
             if any(item <= 0 for item in bins):
                 raise ValueError("window_length_bins must contain positive integers")
             normalized["window_length_bins"] = bins
-        if "calibration_split" in normalized and normalized["calibration_split"] is not None:
+        if (
+            "calibration_split" in normalized
+            and normalized["calibration_split"] is not None
+        ):
             normalized["calibration_split"] = str(normalized["calibration_split"])
         if "legacy_detectability_max_clean_instances" in normalized:
             limit = int(normalized["legacy_detectability_max_clean_instances"])
             if limit < 0:
-                raise ValueError("legacy_detectability_max_clean_instances must be >= 0")
+                raise ValueError(
+                    "legacy_detectability_max_clean_instances must be >= 0"
+                )
             normalized["legacy_detectability_max_clean_instances"] = limit
         return cls(**normalized)
 
@@ -162,7 +179,7 @@ def _normalize_min_count_table(value: Any) -> tuple[tuple[float, int], ...]:
                 count = item.get("count")
             else:
                 alpha, count = item
-            pairs.append((float(alpha), int(count)))
+            pairs.append((float(cast(Any, alpha)), int(cast(Any, count))))
     for alpha, count in pairs:
         if alpha <= 0:
             raise ValueError("calibration minimum-count alpha keys must be positive")
@@ -180,17 +197,23 @@ def _protocol_from_payload(payload: Mapping[str, Any]) -> CapabilityProtocol:
     allowed = set(CapabilityProtocol.__dataclass_fields__.keys())  # type: ignore[attr-defined]
     protocol_payload = {key: value for key, value in payload.items() if key in allowed}
     calibration = payload.get("calibration")
-    if isinstance(calibration, Mapping) and "min_clean_scan_count_for_alpha" in calibration:
+    if (
+        isinstance(calibration, Mapping)
+        and "min_clean_scan_count_for_alpha" in calibration
+    ):
         protocol_payload["calibration_min_clean_scan_count_for_alpha"] = calibration[
             "min_clean_scan_count_for_alpha"
         ]
     if isinstance(calibration, Mapping) and "split" in calibration:
         protocol_payload["calibration_split"] = calibration["split"]
     legacy_detectability = payload.get("legacy_detectability")
-    if isinstance(legacy_detectability, Mapping) and "max_clean_instances" in legacy_detectability:
-        protocol_payload["legacy_detectability_max_clean_instances"] = legacy_detectability[
-            "max_clean_instances"
-        ]
+    if (
+        isinstance(legacy_detectability, Mapping)
+        and "max_clean_instances" in legacy_detectability
+    ):
+        protocol_payload["legacy_detectability_max_clean_instances"] = (
+            legacy_detectability["max_clean_instances"]
+        )
     _apply_window_length_policy(protocol_payload, payload)
     return CapabilityProtocol.from_mapping(protocol_payload)
 
@@ -248,7 +271,9 @@ def _output_format_from_payload(
     output = payload.get("output")
     if not isinstance(output, Mapping):
         return None
-    raw = output.get("output_format", output.get("internal_format", output.get("format")))
+    raw = output.get(
+        "output_format", output.get("internal_format", output.get("format"))
+    )
     if raw is None:
         return None
     value = str(raw).strip().lower()
@@ -269,7 +294,9 @@ def _label_export_from_payload(
     return value  # type: ignore[return-value]
 
 
-def _apply_window_length_policy(protocol_payload: dict[str, Any], payload: Mapping[str, Any]) -> None:
+def _apply_window_length_policy(
+    protocol_payload: dict[str, Any], payload: Mapping[str, Any]
+) -> None:
     raw_policy = payload.get("window_length_policy")
     if raw_policy is None:
         blind_scan = payload.get("blind_scan")

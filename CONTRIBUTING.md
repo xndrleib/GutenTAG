@@ -5,6 +5,25 @@
 We use [black](https://black.readthedocs.io/) to automatically format our python files.
 Please stick to the black code style.
 
+The `synth-gen` branch also uses Pyright as the primary type-checking gate for
+the `gutenTAG` package. Before publishing broad changes, run:
+
+```bash
+black gutenTAG tests
+flake8 gutenTAG tests
+pyright
+pytest
+```
+
+When using the local project environment, prefer:
+
+```bash
+.venv/bin/python -m black gutenTAG tests
+.venv/bin/python -m flake8 gutenTAG tests
+npx --yes pyright
+.venv/bin/python -m pytest
+```
+
 Please consider using the pre-commit hooks.
 They automatically run i.a. black for you.
 See next section.

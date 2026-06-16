@@ -62,7 +62,11 @@ class TargetRegressionResidualModel:
         if not self.coefs_ and self.channels_ >= 2:
             raise RuntimeError("Model must be fitted before scoring")
         values = np.asarray(matrix, dtype=np.float64)
-        if values.ndim != 2 or values.shape[1] < 2 or len(self.coefs_) != values.shape[1]:
+        if (
+            values.ndim != 2
+            or values.shape[1] < 2
+            or len(self.coefs_) != values.shape[1]
+        ):
             return np.zeros(values.shape[0], dtype=np.float64)
         residuals: list[np.ndarray] = []
         for target_index, coef in enumerate(self.coefs_):

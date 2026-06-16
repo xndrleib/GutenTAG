@@ -43,13 +43,17 @@ class AnomalyContract:
         return cls(
             contract_id=str(payload["contract_id"]),
             anomaly_type=str(payload["anomaly_type"]),
-            intended_constraints=tuple(map(str, payload.get("intended_constraints", ()))),
+            intended_constraints=tuple(
+                map(str, payload.get("intended_constraints", ()))
+            ),
             canonical_witnesses=tuple(map(str, payload.get("canonical_witnesses", ()))),
             allowed_artifacts=dict(payload.get("allowed_artifacts", {})),
             forbidden_shortcuts=tuple(map(str, payload.get("forbidden_shortcuts", ()))),
             support_policy=dict(payload.get("support_policy", {})),
             channel_role_policy=dict(payload.get("channel_role_policy", {})),
-            realized_effect_schema=tuple(map(str, payload.get("realized_effect_schema", ()))),
+            realized_effect_schema=tuple(
+                map(str, payload.get("realized_effect_schema", ()))
+            ),
             admission_policy=dict(payload.get("admission_policy", {})),
         )
 

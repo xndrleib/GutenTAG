@@ -43,22 +43,34 @@ def paired_witness_scores(
         multiplier=context_multiplier,
         min_points=min_context_points,
     )
-    clean_context = np.asarray(clean, dtype=np.float64)[idx[:, None], list(subset)] if idx.size else clean_seg
+    clean_context = (
+        np.asarray(clean, dtype=np.float64)[idx[:, None], list(subset)]
+        if idx.size
+        else clean_seg
+    )
     delta_seg = anom_seg - clean_seg
-    delta_all = np.asarray(anomalous, dtype=np.float64)[:, list(subset)] - np.asarray(clean, dtype=np.float64)[:, list(subset)]
+    delta_all = (
+        np.asarray(anomalous, dtype=np.float64)[:, list(subset)]
+        - np.asarray(clean, dtype=np.float64)[:, list(subset)]
+    )
     scale = robust_scale(clean_context, fallback=robust_scale(clean_seg))
     raw_norm = float(np.sqrt(np.mean(np.square(delta_seg)))) if delta_seg.size else 0.0
     scores: dict[str, float] = {
         "energy_delta": finite_float(raw_norm / scale),
         "support_concentration_l2": finite_float(
-            float(np.sum(np.square(delta_seg))) / max(float(np.sum(np.square(delta_all))), 1e-12)
+            float(np.sum(np.square(delta_seg)))
+            / max(float(np.sum(np.square(delta_all))), 1e-12)
         ),
     }
     mean_delta = np.mean(anom_seg, axis=0) - np.mean(clean_seg, axis=0)
-    scores["mean_delta"] = finite_float(float(np.linalg.norm(mean_delta)) / (scale * math.sqrt(len(subset))))
+    scores["mean_delta"] = finite_float(
+        float(np.linalg.norm(mean_delta)) / (scale * math.sqrt(len(subset)))
+    )
     clean_var = np.var(clean_seg, axis=0) + 1e-8
     anom_var = np.var(anom_seg, axis=0) + 1e-8
-    scores["variance_delta"] = finite_float(float(np.linalg.norm(np.log(anom_var / clean_var))) / math.sqrt(len(subset)))
+    scores["variance_delta"] = finite_float(
+        float(np.linalg.norm(np.log(anom_var / clean_var))) / math.sqrt(len(subset))
+    )
     scores["shape_residual"] = finite_float(_shape_residual(clean_seg, anom_seg))
     scores["spectral_delta"] = finite_float(_spectral_delta(clean_seg, anom_seg))
     if len(subset) >= 2:
@@ -70,9 +82,12 @@ def paired_witness_scores(
         clean_cov = safe_covariance(clean_seg)
         anom_cov = safe_covariance(anom_seg)
         scores["covariance_delta"] = finite_float(
-            float(np.linalg.norm(anom_cov - clean_cov, ord="fro")) / max(float(np.linalg.norm(clean_cov, ord="fro")), 1e-8)
+            float(np.linalg.norm(anom_cov - clean_cov, ord="fro"))
+            / max(float(np.linalg.norm(clean_cov, ord="fro")), 1e-8)
         )
-        scores["lag_correlation_delta"] = finite_float(_lag_correlation_delta(clean_seg, anom_seg))
+        scores["lag_correlation_delta"] = finite_float(
+            _lag_correlation_delta(clean_seg, anom_seg)
+        )
     return scores
 
 
@@ -99,26 +114,36 @@ def detection_window_scores(
         multiplier=context_multiplier,
         min_points=min_context_points,
     )
-    context = matrix[idx[:, None], list(subset)] if idx.size else matrix[:, list(subset)]
+    context = (
+        matrix[idx[:, None], list(subset)] if idx.size else matrix[:, list(subset)]
+    )
     scale = robust_scale(context, fallback=robust_scale(window))
     mean_shift = np.mean(window, axis=0) - np.mean(context, axis=0)
     scores: dict[str, float] = {
-        "mean_z": finite_float(float(np.linalg.norm(mean_shift)) / (scale * math.sqrt(len(subset)))),
-        "local_energy_z": finite_float(_local_energy_against_context(window, context) / scale),
+        "mean_z": finite_float(
+            float(np.linalg.norm(mean_shift)) / (scale * math.sqrt(len(subset)))
+        ),
+        "local_energy_z": finite_float(
+            _local_energy_against_context(window, context) / scale
+        ),
     }
     window_var = np.var(window, axis=0) + 1e-8
     context_var = np.var(context, axis=0) + 1e-8
-    scores["variance_log_ratio"] = finite_float(float(np.linalg.norm(np.log(window_var / context_var))) / math.sqrt(len(subset)))
+    scores["variance_log_ratio"] = finite_float(
+        float(np.linalg.norm(np.log(window_var / context_var))) / math.sqrt(len(subset))
+    )
     if len(subset) >= 2:
         window_corr = safe_corrcoef(window)
         context_corr = safe_corrcoef(context)
         scores["correlation_shift"] = finite_float(
-            float(np.linalg.norm(window_corr - context_corr, ord="fro")) / math.sqrt(max(1, len(subset) * (len(subset) - 1)))
+            float(np.linalg.norm(window_corr - context_corr, ord="fro"))
+            / math.sqrt(max(1, len(subset) * (len(subset) - 1)))
         )
         window_cov = safe_covariance(window)
         context_cov = safe_covariance(context)
         scores["covariance_shift"] = finite_float(
-            float(np.linalg.norm(window_cov - context_cov, ord="fro")) / max(float(np.linalg.norm(context_cov, ord="fro")), 1e-8)
+            float(np.linalg.norm(window_cov - context_cov, ord="fro"))
+            / max(float(np.linalg.norm(context_cov, ord="fro")), 1e-8)
         )
     return scores
 
@@ -162,7 +187,9 @@ def _spectral_delta(clean_seg: np.ndarray, anom_seg: np.ndarray) -> float:
     return float(np.mean(np.abs(anom_dist - clean_dist)))
 
 
-def _lag_correlation_delta(clean_seg: np.ndarray, anom_seg: np.ndarray, max_lag: int = 8) -> float:
+def _lag_correlation_delta(
+    clean_seg: np.ndarray, anom_seg: np.ndarray, max_lag: int = 8
+) -> float:
     """Compare cross-correlation lag profiles for the first two projected channels."""
 
     if clean_seg.shape[1] < 2 or clean_seg.shape[0] < 4:
@@ -170,7 +197,9 @@ def _lag_correlation_delta(clean_seg: np.ndarray, anom_seg: np.ndarray, max_lag:
     lag_limit = min(int(max_lag), max(1, clean_seg.shape[0] // 3))
     clean_profile = _lag_profile(clean_seg[:, 0], clean_seg[:, 1], lag_limit)
     anom_profile = _lag_profile(anom_seg[:, 0], anom_seg[:, 1], lag_limit)
-    return float(np.linalg.norm(anom_profile - clean_profile) / math.sqrt(clean_profile.size))
+    return float(
+        np.linalg.norm(anom_profile - clean_profile) / math.sqrt(clean_profile.size)
+    )
 
 
 def _lag_profile(x: np.ndarray, y: np.ndarray, lag_limit: int) -> np.ndarray:
@@ -182,7 +211,12 @@ def _lag_profile(x: np.ndarray, y: np.ndarray, lag_limit: int) -> np.ndarray:
             a, b = x[lag:], y[:-lag]
         else:
             a, b = x, y
-        if a.size < 3 or b.size < 3 or safe_variance(a) <= 1e-8 or safe_variance(b) <= 1e-8:
+        if (
+            a.size < 3
+            or b.size < 3
+            or safe_variance(a) <= 1e-8
+            or safe_variance(b) <= 1e-8
+        ):
             values.append(0.0)
         else:
             corr = float(np.corrcoef(a, b)[0, 1])
@@ -197,7 +231,9 @@ def _local_energy_against_context(window: np.ndarray, context: np.ndarray) -> fl
     return float(np.sqrt(np.mean(np.square(window - center))))
 
 
-def select_scores(scores: Mapping[str, float], witnesses: Sequence[str]) -> dict[str, float]:
+def select_scores(
+    scores: Mapping[str, float], witnesses: Sequence[str]
+) -> dict[str, float]:
     """Select finite scores by witness name."""
 
     return {name: finite_float(scores[name]) for name in witnesses if name in scores}

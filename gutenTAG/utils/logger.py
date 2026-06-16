@@ -12,6 +12,9 @@ class GutenTagLogger:
             f"You tried to generate '{anomaly}' on '{base_oscillation}'. That doesn't work! Guten Tag!"
         )
 
+    def warning(self, message: str) -> None:
+        self.logger.warning(message)
+
 
 if __name__ == "__main__":
     logger = GutenTagLogger()

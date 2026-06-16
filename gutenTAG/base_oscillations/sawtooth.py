@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 from scipy import signal
@@ -60,7 +60,7 @@ def sawtooth(
     phase: float = 0.0,
 ) -> np.ndarray:
     base_ts = prepare_base_signal(length, frequency)
-    func = partial(signal.sawtooth, width=width)
+    func = partial(cast(Any, signal.sawtooth), width=width)
     return generate_periodic_signal(base_ts, func, amplitude, freq_mod, phase)
 
 

@@ -2,7 +2,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from ._version import __version__
+
+if TYPE_CHECKING:
+    from .gutenTAG import GutenTAG
+    from .timeseries import (
+        INDEX_COLUMN_NAME,
+        LABEL_COLUMN_NAME,
+        TimeSeries,
+        TrainingType,
+    )
+    from .ts_dataset_generation import (
+        TSDatasetGenerator,
+        TSGeneratorConfig,
+        generate_ts_dataset,
+    )
 
 __all__ = [
     "__version__",
@@ -17,7 +33,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):  # pragma: no cover - thin lazy-loading shim
+def __getattr__(name: str) -> Any:  # pragma: no cover - thin lazy-loading shim
     if name == "GutenTAG":
         from .gutenTAG import GutenTAG
 

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 from sklearn.neighbors import NearestNeighbors
 
 from .ontology import repair_operator_for_anomaly
+from .pandas_typing import as_frame, column, frame_groupby, numeric_column
 from .protocol import CapabilityProtocol
 
 
@@ -52,15 +53,25 @@ def compute_identifiability_profiles(
 
     embeddings = _build_event_embeddings(observability, event_summary)
     summary = _leave_one_out_summary(embeddings)
-    pairwise = _pairwise_class_distances(embeddings) if protocol.include_pairwise_identifiability else pd.DataFrame()
-    return IdentifiabilityResult(event_embeddings=embeddings, summary=summary, pairwise=pairwise)
+    pairwise = (
+        _pairwise_class_distances(embeddings)
+        if protocol.include_pairwise_identifiability
+        else pd.DataFrame()
+    )
+    return IdentifiabilityResult(
+        event_embeddings=embeddings, summary=summary, pairwise=pairwise
+    )
 
 
-def _build_event_embeddings(observability: pd.DataFrame, event_summary: pd.DataFrame) -> pd.DataFrame:
+def _build_event_embeddings(
+    observability: pd.DataFrame, event_summary: pd.DataFrame
+) -> pd.DataFrame:
     if event_summary.empty:
         return pd.DataFrame()
     records: list[dict[str, object]] = []
-    grouped = observability.groupby("event_id") if not observability.empty else {}
+    grouped = (
+        frame_groupby(observability, "event_id") if not observability.empty else None
+    )
     for _, row in event_summary.iterrows():
         event_id = str(row["event_id"])
         record: dict[str, object] = {
@@ -76,17 +87,27 @@ def _build_event_embeddings(observability: pd.DataFrame, event_summary: pd.DataF
             "semantic_scope": row.get("semantic_scope"),
             "repair_operator": repair_operator_for_anomaly(row.get("anomaly_type")),
             "length": row.get("length"),
-            "D_s1": float(row.get("D_s1", 0.0)),
-            "D_s2": float(row.get("D_s2", row.get("D_s1", 0.0))),
-            "best_distance": float(row.get("best_distance", 0.0)),
-            "witness_sufficiency_proxy": float(row.get("witness_sufficiency_proxy", 0.0)),
-            "support_concentration_l2_max": float(row.get("support_concentration_l2_max", 0.0)),
+            "D_s1": _float_value(row.get("D_s1", 0.0)),
+            "D_s2": _float_value(row.get("D_s2", row.get("D_s1", 0.0))),
+            "best_distance": _float_value(row.get("best_distance", 0.0)),
+            "witness_sufficiency_proxy": float(
+                _float_value(row.get("witness_sufficiency_proxy", 0.0))
+            ),
+            "support_concentration_l2_max": float(
+                _float_value(row.get("support_concentration_l2_max", 0.0))
+            ),
         }
-        if not observability.empty and event_id in grouped.groups:
-            frame = grouped.get_group(event_id)
+        if grouped is not None and event_id in grouped.groups:
+            frame = as_frame(grouped.get_group(event_id))
             for witness in EMBEDDING_WITNESSES:
-                witness_frame = frame[frame["witness_family"] == witness]
-                record[f"witness_{witness}"] = float(witness_frame["distance_value"].max()) if not witness_frame.empty else 0.0
+                witness_frame = as_frame(
+                    frame[column(frame, "witness_family") == witness]
+                )
+                record[f"witness_{witness}"] = (
+                    float(numeric_column(witness_frame, "distance_value").max())
+                    if not witness_frame.empty
+                    else 0.0
+                )
         else:
             for witness in EMBEDDING_WITNESSES:
                 record[f"witness_{witness}"] = 0.0
@@ -109,7 +130,7 @@ def _support_type(row: pd.Series) -> str:
     if event_scope not in {"", "unknown", "nan"}:
         return event_scope
     try:
-        length = int(row.get("length", 0))
+        length = _int_value(row.get("length", 0))
     except (TypeError, ValueError):
         length = 0
     if length <= 2:
@@ -121,7 +142,15 @@ def _feature_matrix(embeddings: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     feature_columns = [
         column
         for column in embeddings.columns
-        if column.startswith("witness_") or column in {"D_s1", "D_s2", "best_distance", "witness_sufficiency_proxy", "support_concentration_l2_max"}
+        if column.startswith("witness_")
+        or column
+        in {
+            "D_s1",
+            "D_s2",
+            "best_distance",
+            "witness_sufficiency_proxy",
+            "support_concentration_l2_max",
+        }
     ]
     if not feature_columns:
         return np.zeros((len(embeddings), 0), dtype=np.float64), []
@@ -169,6 +198,20 @@ def _leave_one_out_summary(embeddings: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _float_value(value: object, default: float = 0.0) -> float:
+    try:
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_value(value: object, default: int = 0) -> int:
+    try:
+        return int(cast(Any, value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _leave_one_out_nearest_labels(matrix: np.ndarray, labels: np.ndarray) -> list[str]:
     n_rows = int(len(labels))
     if n_rows < 2:
@@ -176,12 +219,21 @@ def _leave_one_out_nearest_labels(matrix: np.ndarray, labels: np.ndarray) -> lis
     if matrix.shape[1] == 0:
         return [str(labels[1 if idx == 0 else 0]) for idx in range(n_rows)]
 
-    neighbors = NearestNeighbors(n_neighbors=min(2, n_rows), algorithm="auto", metric="euclidean")
+    neighbors = NearestNeighbors(
+        n_neighbors=min(2, n_rows), algorithm="auto", metric="euclidean"
+    )
     neighbors.fit(matrix)
     indices = neighbors.kneighbors(matrix, return_distance=False)
     predictions: list[str] = []
     for row_idx, neighbor_indices in enumerate(indices):
-        nearest = next((int(candidate) for candidate in neighbor_indices if int(candidate) != row_idx), None)
+        nearest = next(
+            (
+                int(candidate)
+                for candidate in neighbor_indices
+                if int(candidate) != row_idx
+            ),
+            None,
+        )
         if nearest is None:
             nearest = 1 if row_idx == 0 else 0
         predictions.append(str(labels[nearest]))
@@ -197,14 +249,19 @@ def _pairwise_class_distances(embeddings: pd.DataFrame) -> pd.DataFrame:
         labels = embeddings[descriptor].astype(str).to_numpy()
         classes = sorted(set(labels))
         centroids: dict[str, np.ndarray] = {
-            label: np.mean(matrix[labels == label], axis=0) for label in classes if np.any(labels == label)
+            label: np.mean(matrix[labels == label], axis=0)
+            for label in classes
+            if np.any(labels == label)
         }
         spreads: dict[str, float] = {
-            label: _mean_radius(matrix[labels == label], centroids[label]) for label in centroids
+            label: _mean_radius(matrix[labels == label], centroids[label])
+            for label in centroids
         }
         for i, class_i in enumerate(classes):
             for class_j in classes[i + 1 :]:
-                distance = float(np.linalg.norm(centroids[class_i] - centroids[class_j]))
+                distance = float(
+                    np.linalg.norm(centroids[class_i] - centroids[class_j])
+                )
                 pooled_spread = float(spreads[class_i] + spreads[class_j] + 1e-12)
                 rows.append(
                     {

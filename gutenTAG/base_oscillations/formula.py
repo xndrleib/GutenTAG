@@ -16,7 +16,6 @@ from ..utils.global_variables import (
 )
 from ..utils.types import BOGenerationContext
 
-
 BASE = "base"
 OPERATION = "operation"
 OPERAND = "operand"

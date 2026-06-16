@@ -128,6 +128,7 @@ class ConfigParser:
                 name,
                 f"'{BASE_OSCILLATION}' requires parameter '{PARAMETERS.CHANNELS}'.",
             )
+            return [], 0
         else:
             bo_template = d.get(BASE_OSCILLATION)
             if isinstance(bo_template, list):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -12,9 +12,9 @@ import pandas as pd
 from ..labels import annotation_channel_manifest, build_annotation_channels
 from .cache import CacheStore
 from .dataset import DatasetIndex, InstanceRecord, raw_events_for_instance
+from .pandas_typing import as_series
 from .partitions import PartitionSpec, partition_sequence, run_partitions
 from .protocol import CapabilityProtocol
-
 
 LABEL_TABLE_KEYS: tuple[str, ...] = (
     "labels_oracle_any",
@@ -116,7 +116,9 @@ def _annotation_for_instances(
         for name in LABEL_TABLE_KEYS:
             channel = channels[name]
             if emit_label_tables:
-                label_frames[name].append(_flatten_label_table(instance, channel.values, channel.columns))
+                label_frames[name].append(
+                    _flatten_label_table(instance, channel.values, channel.columns)
+                )
             if not events:
                 continue
             reference = reference_arrays[channel.reference_channel]
@@ -158,13 +160,17 @@ def _combine_annotation_results(
         if emit_label_tables
         else {}
     )
-    manifest["omitted_table_names"] = [] if emit_label_tables else list(LABEL_TABLE_KEYS)
+    manifest["omitted_table_names"] = (
+        [] if emit_label_tables else list(LABEL_TABLE_KEYS)
+    )
     manifest["diagnostic_tables"] = {
         "annotation_alignment": "annotation_alignment.csv",
         "annotation_robustness": "annotation_robustness.csv",
     }
     manifest["instance_count"] = len(dataset.instances)
-    manifest["event_group_count"] = int(sum(len(instance.event_groups) for instance in dataset.instances))
+    manifest["event_group_count"] = int(
+        sum(len(instance.event_groups) for instance in dataset.instances)
+    )
     return AnnotationProfileResult(
         label_tables=label_tables,
         alignment=alignment,
@@ -243,7 +249,7 @@ def _flatten_label_table(
     columns: tuple[str, ...],
 ) -> pd.DataFrame:
     matrix = np.asarray(values, dtype=np.int8)
-    frame = pd.DataFrame(matrix, columns=list(columns))
+    frame = pd.DataFrame(matrix, columns=pd.Index(list(columns)))
     frame.insert(0, "time_index", np.arange(instance.length, dtype=int))
     frame.insert(0, "instance_id", instance.instance_id)
     frame.insert(0, "split", instance.split)
@@ -305,7 +311,9 @@ def _broadcast_reference(reference: np.ndarray, values: np.ndarray) -> np.ndarra
         return np.repeat(ref, target.shape[1], axis=1)
     if ref.ndim == 2 and target.ndim == 2 and target.shape[1] == 1:
         return (ref.max(axis=1, keepdims=True) > 0).astype(np.int8)
-    return (ref.reshape(ref.shape[0], -1).max(axis=1, keepdims=True) > 0).astype(np.int8)
+    return (ref.reshape(ref.shape[0], -1).max(axis=1, keepdims=True) > 0).astype(
+        np.int8
+    )
 
 
 def _flatten_binary(values: np.ndarray) -> np.ndarray:
@@ -353,13 +361,17 @@ def _robustness_summary(alignment: pd.DataFrame) -> pd.DataFrame:
     if alignment.empty:
         return pd.DataFrame()
     rows: list[dict[str, object]] = []
-    grouped = alignment.groupby(["variant_id", "annotation_channel", "reference_channel"], dropna=False)
+    grouped = alignment.groupby(
+        ["variant_id", "annotation_channel", "reference_channel"], dropna=False
+    )
     for key, frame in grouped:
-        variant_id, annotation_channel, reference_channel = key
-        precision = frame["precision"].astype(float)
-        recall = frame["recall"].astype(float)
-        jaccard = frame["jaccard"].astype(float)
-        onset = frame["onset_delta"].astype(float)
+        variant_id, annotation_channel, reference_channel = cast(
+            tuple[object, object, object], key
+        )
+        precision = as_series(frame["precision"]).astype(float)
+        recall = as_series(frame["recall"]).astype(float)
+        jaccard = as_series(frame["jaccard"]).astype(float)
+        onset = as_series(frame["onset_delta"]).astype(float)
         rows.append(
             {
                 "variant_id": variant_id,
@@ -373,7 +385,9 @@ def _robustness_summary(alignment: pd.DataFrame) -> pd.DataFrame:
                 "precision_iqr": _iqr(precision),
                 "recall_iqr": _iqr(recall),
                 "jaccard_iqr": _iqr(jaccard),
-                "alignment_pass_rate": float((frame["alignment_status"] == "aligned").mean()),
+                "alignment_pass_rate": float(
+                    (as_series(frame["alignment_status"]) == "aligned").mean()
+                ),
                 "robustness_status": _robustness_status(precision, recall, jaccard),
             }
         )
@@ -399,11 +413,15 @@ def _alignment_status(precision: float, recall: float, jaccard: float) -> str:
     return "partially_aligned"
 
 
-def _robustness_status(precision: pd.Series, recall: pd.Series, jaccard: pd.Series) -> str:
+def _robustness_status(
+    precision: pd.Series, recall: pd.Series, jaccard: pd.Series
+) -> str:
     med_precision = _median_finite(precision)
     med_recall = _median_finite(recall)
     med_jaccard = _median_finite(jaccard)
-    if not all(math.isfinite(value) for value in (med_precision, med_recall, med_jaccard)):
+    if not all(
+        math.isfinite(value) for value in (med_precision, med_recall, med_jaccard)
+    ):
         return "not_estimable"
     if med_precision >= 0.95 and med_recall >= 0.95 and med_jaccard >= 0.90:
         return "oracle_equivalent"
@@ -417,22 +435,31 @@ def _robustness_status(precision: pd.Series, recall: pd.Series, jaccard: pd.Seri
 
 
 def _median_finite(values: pd.Series) -> float:
-    finite = values[np.isfinite(values)]
-    if finite.empty:
+    finite = _finite_array(values)
+    if finite.size == 0:
         return float("nan")
-    return float(finite.median())
+    return float(np.median(finite))
 
 
 def _iqr(values: pd.Series) -> float:
-    finite = values[np.isfinite(values)]
-    if finite.empty:
+    finite = _finite_array(values)
+    if finite.size == 0:
         return float("nan")
-    return float(finite.quantile(0.75) - finite.quantile(0.25))
+    return float(np.quantile(finite, 0.75) - np.quantile(finite, 0.25))
+
+
+def _finite_array(values: pd.Series) -> np.ndarray:
+    array = as_series(pd.to_numeric(values, errors="coerce")).to_numpy(
+        dtype=np.dtype(np.float64)
+    )
+    return array[np.isfinite(array)]
 
 
 def _concat_frames(frames: Any) -> pd.DataFrame:
     materialized = [frame for frame in frames if not frame.empty]
-    return pd.concat(materialized, ignore_index=True) if materialized else pd.DataFrame()
+    return (
+        pd.concat(materialized, ignore_index=True) if materialized else pd.DataFrame()
+    )
 
 
 def _read_cached_table(

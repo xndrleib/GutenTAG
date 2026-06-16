@@ -178,7 +178,9 @@ def annotation_channel_manifest() -> dict[str, Any]:
     }
 
 
-def _event_interval_mask(length: int, events: Sequence[Mapping[str, Any]]) -> np.ndarray:
+def _event_interval_mask(
+    length: int, events: Sequence[Mapping[str, Any]]
+) -> np.ndarray:
     values = np.zeros((int(length), 1), dtype=np.int8)
     for event in events:
         start, end = _event_bounds(event, length)
@@ -221,7 +223,9 @@ def _visible_only_mask(length: int, events: Sequence[Mapping[str, Any]]) -> np.n
     return values
 
 
-def _noisy_boundary_mask(length: int, events: Sequence[Mapping[str, Any]]) -> np.ndarray:
+def _noisy_boundary_mask(
+    length: int, events: Sequence[Mapping[str, Any]]
+) -> np.ndarray:
     values = np.zeros((int(length), 1), dtype=np.int8)
     for index, event in enumerate(events):
         start, end = _event_bounds(event, length)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping, cast
 
 
 def boundary_annotation(event: Mapping[str, object]) -> str:
@@ -12,4 +12,4 @@ def boundary_annotation(event: Mapping[str, object]) -> str:
     share = event.get("boundary_energy_share")
     if share is None:
         return status
-    return f"{status} (boundary_energy_share={float(share):.3g})"
+    return f"{status} (boundary_energy_share={float(cast(Any, share)):.3g})"

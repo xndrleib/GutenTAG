@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -16,7 +16,6 @@ from ..utils.global_variables import (
     PARAMETERS,
 )
 from ..utils.types import BOGenerationContext
-
 
 # we fix the sampling rate to 100 points = 1s
 sampling_rate = 100
@@ -68,7 +67,8 @@ def ecg(
     duration = length // sampling_rate
     # frequency = beats per 100 points = beats per second
     heart_rate = int(frequency / 100 * sampling_rate * 60)
-    ecg = nk.ecg_simulate(
+    neurokit = cast(Any, nk)
+    ecg = neurokit.ecg_simulate(
         duration=duration,
         sampling_rate=sampling_rate,
         heart_rate=heart_rate,

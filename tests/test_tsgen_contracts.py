@@ -24,7 +24,9 @@ class TestTsgenContracts(unittest.TestCase):
         self.assertEqual(mode.channel_role_policy["canonical_min_projection_size"], 2)
         self.assertIn("dependence.correlation", corr.intended_constraints)
 
-    def test_legacy_single_channel_mode_correlation_is_not_upgraded_to_relation(self) -> None:
+    def test_legacy_single_channel_mode_correlation_is_not_upgraded_to_relation(
+        self,
+    ) -> None:
         registry = ContractRegistry.from_resource_defaults()
         instance = _instance()
         group = _event_group(
@@ -39,7 +41,9 @@ class TestTsgenContracts(unittest.TestCase):
         self.assertIn("missing_channel_roles", genotype.warnings)
         self.assertIn("relation_claim_not_inferred", genotype.warnings)
         self.assertEqual(genotype.constraints["violated"], ("legacy.channel_event",))
-        self.assertEqual(genotype.constraints["canonical_witnesses"], ("energy_delta", "mean_delta"))
+        self.assertEqual(
+            genotype.constraints["canonical_witnesses"], ("energy_delta", "mean_delta")
+        )
 
     def test_legacy_multichannel_mode_correlation_keeps_contract_claim(self) -> None:
         registry = ContractRegistry.from_resource_defaults()
@@ -57,7 +61,9 @@ class TestTsgenContracts(unittest.TestCase):
         self.assertIn("regime.mode_alignment", genotype.constraints["violated"])
         self.assertEqual(genotype.alternative_process["context_channels"], (0, 1))
 
-    def test_metadata_registry_writer_creates_compact_deduplicated_records(self) -> None:
+    def test_metadata_registry_writer_creates_compact_deduplicated_records(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_dataset_instance(root, "instance_000", group_id=0)

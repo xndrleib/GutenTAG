@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Type
+from typing import Optional, TYPE_CHECKING, Type
 
 import numpy as np
 from scipy.stats import norm
@@ -8,10 +8,14 @@ from sklearn.preprocessing import MinMaxScaler
 from . import BaseAnomaly, AnomalyProtocol
 from ...base_oscillations import RandomModeJump
 
+if TYPE_CHECKING:
+    from ...base_oscillations.interface import BaseOscillationInterface
+
 
 @dataclass
 class AnomalyTrendParameters:
-    trend: "BaseOscillationInterface"  # type: ignore # noqa: F821 # otherwise we have a circular import
+    # Importing BaseOscillationInterface here would create a circular import.
+    trend: "BaseOscillationInterface"
     transition_length: Optional[int] = None
     boundary_mode: str = "inside_window_zero_endpoints"
     envelope_kind: str = "sine2"
@@ -38,67 +42,100 @@ class AnomalyTrend(BaseAnomaly):
         if length <= 0:
             return anomaly_protocol
 
+        transition_length = self._resolved_transition_length(length)
+        amplitude_bell = self._transition_amplitude_bell(length, transition_length)
+        timeseries = self._generate_trend_timeseries(anomaly_protocol, length)
+        if timeseries is None:
+            return anomaly_protocol
+
+        if self.boundary_mode == "legacy_carry_over":
+            self._apply_legacy_carry_over(
+                anomaly_protocol,
+                timeseries=timeseries,
+                amplitude_bell=amplitude_bell,
+            )
+            return anomaly_protocol
+
+        local = self._bounded_local_trend(timeseries, amplitude_bell)
+        anomaly_protocol.base_oscillation.trend_series[
+            anomaly_protocol.start : anomaly_protocol.end
+        ] += local
+
+        return anomaly_protocol
+
+    def _resolved_transition_length(self, length: int) -> int:
         if self.transition_length is None:
             transition_length = int(round(length * 0.2))
-            transition_length = max(1, min(transition_length, length))
-        else:
-            transition_length = max(0, min(int(self.transition_length), length))
-        if transition_length == 0:
-            amplitude_bell = np.ones(length, dtype=np.float64)
-        else:
-            plateau_length = max(0, length - transition_length)
-            start_transition = norm.pdf(
-                np.linspace(-3, 0, transition_length), scale=1.05
-            )
-            if start_transition.size == 0:
-                amplitude_bell = np.ones(length, dtype=np.float64)
-            else:
-                start_max = start_transition.max()
-                if start_max == 0:
-                    start_transition = np.ones_like(start_transition)
-                else:
-                    start_transition = start_transition / start_max
-                amplitude_bell = np.concatenate(
-                    [start_transition, np.ones(plateau_length)]
-                )
-                if amplitude_bell.shape[0] > length:
-                    amplitude_bell = amplitude_bell[:length]
-                elif amplitude_bell.shape[0] < length:
-                    amplitude_bell = np.pad(
-                        amplitude_bell,
-                        (0, length - amplitude_bell.shape[0]),
-                        mode="edge",
-                    )
-                amplitude_bell = (
-                    MinMaxScaler(feature_range=(0, 1))
-                    .fit_transform(amplitude_bell.reshape(-1, 1))
-                    .reshape(-1)
-                )
+            return max(1, min(transition_length, length))
+        return max(0, min(int(self.transition_length), length))
 
+    @staticmethod
+    def _transition_amplitude_bell(length: int, transition_length: int) -> np.ndarray:
+        if transition_length == 0:
+            return np.ones(length, dtype=np.float64)
+        plateau_length = max(0, length - transition_length)
+        start_transition = norm.pdf(
+            np.linspace(-3, 0, transition_length),
+            scale=1.05,
+        )
+        if start_transition.size == 0:
+            return np.ones(length, dtype=np.float64)
+        start_max = start_transition.max()
+        if start_max == 0:
+            start_transition = np.ones_like(start_transition)
+        else:
+            start_transition = start_transition / start_max
+        amplitude_bell = np.concatenate([start_transition, np.ones(plateau_length)])
+        amplitude_bell = AnomalyTrend._fit_trend_length(amplitude_bell, length)
+        return (
+            MinMaxScaler(feature_range=(0, 1))
+            .fit_transform(amplitude_bell.reshape(-1, 1))
+            .reshape(-1)
+        )
+
+    def _generate_trend_timeseries(
+        self,
+        anomaly_protocol: AnomalyProtocol,
+        length: int,
+    ) -> np.ndarray | None:
         self.trend.length = length
         self.trend.generate_timeseries_and_variations(anomaly_protocol.ctx.to_bo())
         timeseries = self.trend.timeseries
         if timeseries is None:
-            return anomaly_protocol
-        if timeseries.shape[0] > length:
-            timeseries = timeseries[:length]
-        elif timeseries.shape[0] < length:
-            if timeseries.shape[0] == 0:
-                return anomaly_protocol
-            timeseries = np.pad(
-                timeseries, (0, length - timeseries.shape[0]), mode="edge"
-            )
-        if self.boundary_mode == "legacy_carry_over":
-            timeseries *= amplitude_bell
-            end_point = timeseries[-1]
-            anomaly_protocol.base_oscillation.trend_series[
-                anomaly_protocol.start : anomaly_protocol.end
-            ] += timeseries
-            anomaly_protocol.base_oscillation.trend_series[
-                anomaly_protocol.end :
-            ] += end_point
-            return anomaly_protocol
+            return None
+        if timeseries.shape[0] == 0:
+            return None
+        return self._fit_trend_length(timeseries, length)
 
+    @staticmethod
+    def _fit_trend_length(values: np.ndarray, length: int) -> np.ndarray:
+        if values.shape[0] > length:
+            return values[:length]
+        if values.shape[0] < length:
+            return np.pad(values, (0, length - values.shape[0]), mode="edge")
+        return values
+
+    @staticmethod
+    def _apply_legacy_carry_over(
+        anomaly_protocol: AnomalyProtocol,
+        *,
+        timeseries: np.ndarray,
+        amplitude_bell: np.ndarray,
+    ) -> None:
+        timeseries *= amplitude_bell
+        end_point = timeseries[-1]
+        anomaly_protocol.base_oscillation.trend_series[
+            anomaly_protocol.start : anomaly_protocol.end
+        ] += timeseries
+        anomaly_protocol.base_oscillation.trend_series[
+            anomaly_protocol.end :
+        ] += end_point
+
+    def _bounded_local_trend(
+        self,
+        timeseries: np.ndarray,
+        amplitude_bell: np.ndarray,
+    ) -> np.ndarray:
         local = np.asarray(timeseries, dtype=np.float64).copy()
         local = self._anchor_zero_endpoints(local)
         if self.envelope_kind in ("sine2", "sin2") and local.shape[0] > 1:
@@ -106,13 +143,7 @@ class AnomalyTrend(BaseAnomaly):
             local *= np.sin(phase) ** 2
         elif self.envelope_kind == "transition":
             local *= amplitude_bell
-        local = self._enforce_min_effect(local, self.min_effect_delta)
-
-        anomaly_protocol.base_oscillation.trend_series[
-            anomaly_protocol.start : anomaly_protocol.end
-        ] += local
-
-        return anomaly_protocol
+        return self._enforce_min_effect(local, self.min_effect_delta)
 
     @staticmethod
     def _anchor_zero_endpoints(values: np.ndarray) -> np.ndarray:

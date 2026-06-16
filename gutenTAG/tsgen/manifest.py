@@ -13,7 +13,6 @@ from typing import Any, Iterable, Mapping, Optional
 
 from .io.strict_json import sanitize_json_value
 
-
 DEFAULT_DEPENDENCIES: tuple[str, ...] = (
     "numpy",
     "pandas",
@@ -82,6 +81,103 @@ def build_environment_metadata(
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "dependencies": versions,
+    }
+
+
+def build_dataset_manifest(
+    *,
+    output_root: Path,
+    repo_root: Path,
+    dataset_version: str,
+    library_version: str,
+    config: Mapping[str, Any],
+    generated_variant_entries: Iterable[Mapping[str, Any]],
+    skipped_variants: Iterable[Mapping[str, Any]],
+    disabled_anomaly_types: Iterable[str],
+    aggregated_statistics: Mapping[str, Any],
+    derived_seeds: Mapping[str, Any],
+    metadata_registry: Mapping[str, Any],
+    generator_sidecars: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the dataset-level manifest for generated TS artifacts."""
+
+    config_dict = sanitize_json_value(config)
+    variant_entries = [dict(entry) for entry in generated_variant_entries]
+    sidecars = dict(generator_sidecars)
+    manifest = {
+        "dataset_schema_version": "synthgen.dataset.v1",
+        "dataset_version": dataset_version,
+        "generator": {
+            "library_version": library_version,
+            "git": resolve_git_metadata(repo_root),
+        },
+        "environment": build_environment_metadata(),
+        "config": config_dict,
+        "normalized_config_hash": canonical_json_hash(config_dict),
+        "generated_variants": [entry["variant_id"] for entry in variant_entries],
+        "variant_manifests": variant_entries,
+        "skipped_variants": list(skipped_variants),
+        "disabled_anomaly_types": list(disabled_anomaly_types),
+        "aggregated_statistics": aggregated_statistics,
+        "derived_seeds": derived_seeds,
+        "metadata_registry": metadata_registry,
+        "generator_sidecars": sidecars,
+        "annotation_channels": sidecars["annotation_channels"],
+        "law_level_replicates": sidecars["law_level_replicates"],
+        "label_semantics": _label_semantics_manifest_section(),
+        "onset_metadata": _onset_metadata_manifest_section(),
+        "artifacts": _artifact_manifest_section(output_root),
+    }
+    return sanitize_json_value(manifest)
+
+
+def _label_semantics_manifest_section() -> dict[str, Any]:
+    return {
+        "version": "label_semantics.v2",
+        "labels_any": "event interval union across all events",
+        "labels_intervention": (
+            "operator target or perturbed channels; not necessarily the final "
+            "benchmark target for relation-only anomalies"
+        ),
+        "labels_context": (
+            "channels needed to interpret event-level or relation-level anomalies"
+        ),
+        "events": "event-level truth with group, operator-target, and context roles",
+    }
+
+
+def _onset_metadata_manifest_section() -> dict[str, Any]:
+    return {
+        "version": "onset_metadata.v1",
+        "fields": {
+            "requested_pre_context": (
+                "Requested number of observations before the planned anomaly "
+                "source starts; this is the experimental bucket value."
+            ),
+            "actual_source_start": (
+                "Actual planned source start after any alignment strategy has "
+                "been applied."
+            ),
+            "actual_support_start": (
+                "First effective labeled support index after applying the "
+                "anomaly operator and support-label policy."
+            ),
+            "onset_bucket": "Split bucket name that supplied requested_pre_context.",
+            "alignment_strategy": (
+                "Planner strategy used to place the first anomaly source, for "
+                "example exact or mode_grid."
+            ),
+            "alignment_error": (
+                "actual_source_start minus requested_pre_context; zero for exact "
+                "placements."
+            ),
+        },
+    }
+
+
+def _artifact_manifest_section(output_root: Path) -> dict[str, Any]:
+    return {
+        "data_content_hash": hash_generated_csv(output_root),
     }
 
 

@@ -29,80 +29,137 @@ class AnomalyVariance(BaseAnomaly):
             self.logger.warn_false_combination(
                 self.__class__.__name__, anomaly_protocol.base_oscillation_kind
             )
-
         elif anomaly_protocol.base_oscillation_kind == CylinderBellFunnel.KIND:
-            subsequence = base.generate_only_base(
-                anomaly_protocol.ctx.to_bo(), variance=self.variance
-            )[anomaly_protocol.start : anomaly_protocol.end]
-            anomaly_protocol.subsequences.append(subsequence)
-
+            self._append_cbf_subsequence(anomaly_protocol)
         else:
-            length = anomaly_protocol.end - anomaly_protocol.start
-            if length <= 0:
-                return anomaly_protocol
-
-            clean_segment = base.timeseries[anomaly_protocol.start : anomaly_protocol.end]
-            amplitude = abs(float(getattr(base, "amplitude", 1.0)))
-            reference_scale = self._estimate_reference_scale(
-                clean_segment=clean_segment,
-                base_kind=base_kind,
-                amplitude=amplitude,
-            )
-
-            target_std = max(0.0, float(self.variance) * reference_scale)
-
-            if target_std <= 0:
-                original_noise = np.array(
-                    base.noise[anomaly_protocol.start : anomaly_protocol.end], copy=True
-                )
-                envelope = self.build_symmetric_envelope(length, self.transition_length)
-                candidate_noise = original_noise * (1.0 - envelope)
-                if candidate_noise.size > 0:
-                    candidate_noise[0] = original_noise[0]
-                    candidate_noise[-1] = original_noise[-1]
-                base.noise[anomaly_protocol.start : anomaly_protocol.end] = candidate_noise
-                return anomaly_protocol
-
-            original_noise = np.array(
-                base.noise[anomaly_protocol.start : anomaly_protocol.end], copy=True
-            )
-            subsequence_noise = base.generate_noise(
-                anomaly_protocol.ctx.to_bo(), target_std, length
-            )
-            envelope = self.build_symmetric_envelope(length, self.transition_length)
-            if base_kind in {"polynomial", "random-walk"}:
-                # Smooth-trend carriers need an additive residual burst; simple
-                # replacement tends to stay too close to the original low-noise
-                # regime and becomes visually weak under the QC detector stack.
-                candidate_noise = original_noise + envelope * subsequence_noise
-            else:
-                candidate_noise = original_noise + envelope * (
-                    subsequence_noise - original_noise
-                )
-            effective_min_effect = float(self.min_effect_delta)
-            if base_kind in {"polynomial", "random-walk"}:
-                effective_min_effect = max(effective_min_effect, 0.75 * reference_scale)
-            if effective_min_effect > 0.0:
-                candidate_noise = self._enforce_min_effect_delta(
-                    candidate_noise=candidate_noise,
-                    original_noise=original_noise,
-                    min_effect_delta=effective_min_effect,
-                    rng=anomaly_protocol.rng,
-                    preserve_edges=False,
-                )
-            if candidate_noise.size > 0:
-                candidate_noise[0] = original_noise[0]
-                candidate_noise[-1] = original_noise[-1]
-            if effective_min_effect > 0.0:
-                candidate_noise = self._enforce_min_effect_delta(
-                    candidate_noise=candidate_noise,
-                    original_noise=original_noise,
-                    min_effect_delta=effective_min_effect,
-                    rng=anomaly_protocol.rng,
-                    preserve_edges=True,
-                )
-            base.noise[anomaly_protocol.start : anomaly_protocol.end] = candidate_noise
+            self._apply_variance_noise(anomaly_protocol, base_kind)
         return anomaly_protocol
+
+    def _append_cbf_subsequence(self, anomaly_protocol: AnomalyProtocol) -> None:
+        base = anomaly_protocol.base_oscillation
+        subsequence = base.generate_only_base(
+            anomaly_protocol.ctx.to_bo(), variance=self.variance
+        )[anomaly_protocol.start : anomaly_protocol.end]
+        anomaly_protocol.subsequences.append(subsequence)
+
+    def _apply_variance_noise(
+        self,
+        anomaly_protocol: AnomalyProtocol,
+        base_kind: str,
+    ) -> None:
+        length = anomaly_protocol.end - anomaly_protocol.start
+        if length <= 0:
+            return
+        base = anomaly_protocol.base_oscillation
+        reference_scale = self._reference_scale(anomaly_protocol, base_kind)
+        original_noise = np.array(
+            base.noise[anomaly_protocol.start : anomaly_protocol.end],
+            copy=True,
+        )
+        target_std = max(0.0, float(self.variance) * reference_scale)
+        if target_std <= 0:
+            candidate_noise = self._zero_target_noise(original_noise, length)
+        else:
+            candidate_noise = self._target_variance_noise(
+                anomaly_protocol=anomaly_protocol,
+                original_noise=original_noise,
+                target_std=target_std,
+                reference_scale=reference_scale,
+                base_kind=base_kind,
+            )
+        base.noise[anomaly_protocol.start : anomaly_protocol.end] = candidate_noise
+
+    def _reference_scale(
+        self,
+        anomaly_protocol: AnomalyProtocol,
+        base_kind: str,
+    ) -> float:
+        base = anomaly_protocol.base_oscillation
+        clean_segment = base.timeseries[anomaly_protocol.start : anomaly_protocol.end]
+        amplitude = abs(float(getattr(base, "amplitude", 1.0)))
+        return self._estimate_reference_scale(
+            clean_segment=clean_segment,
+            base_kind=base_kind,
+            amplitude=amplitude,
+        )
+
+    def _zero_target_noise(
+        self,
+        original_noise: np.ndarray,
+        length: int,
+    ) -> np.ndarray:
+        envelope = self.build_symmetric_envelope(length, self.transition_length)
+        candidate_noise = original_noise * (1.0 - envelope)
+        return self._preserve_noise_edges(candidate_noise, original_noise)
+
+    def _target_variance_noise(
+        self,
+        *,
+        anomaly_protocol: AnomalyProtocol,
+        original_noise: np.ndarray,
+        target_std: float,
+        reference_scale: float,
+        base_kind: str,
+    ) -> np.ndarray:
+        base = anomaly_protocol.base_oscillation
+        length = anomaly_protocol.end - anomaly_protocol.start
+        subsequence_noise = base.generate_noise(
+            anomaly_protocol.ctx.to_bo(), target_std, length
+        )
+        candidate_noise = self._blend_candidate_noise(
+            original_noise=original_noise,
+            subsequence_noise=subsequence_noise,
+            length=length,
+            base_kind=base_kind,
+        )
+        effective_min_effect = self._effective_min_effect(base_kind, reference_scale)
+        if effective_min_effect > 0.0:
+            candidate_noise = self._enforce_min_effect_delta(
+                candidate_noise=candidate_noise,
+                original_noise=original_noise,
+                min_effect_delta=effective_min_effect,
+                rng=anomaly_protocol.rng,
+                preserve_edges=False,
+            )
+        candidate_noise = self._preserve_noise_edges(candidate_noise, original_noise)
+        if effective_min_effect > 0.0:
+            candidate_noise = self._enforce_min_effect_delta(
+                candidate_noise=candidate_noise,
+                original_noise=original_noise,
+                min_effect_delta=effective_min_effect,
+                rng=anomaly_protocol.rng,
+                preserve_edges=True,
+            )
+        return candidate_noise
+
+    def _blend_candidate_noise(
+        self,
+        *,
+        original_noise: np.ndarray,
+        subsequence_noise: np.ndarray,
+        length: int,
+        base_kind: str,
+    ) -> np.ndarray:
+        envelope = self.build_symmetric_envelope(length, self.transition_length)
+        if base_kind in {"polynomial", "random-walk"}:
+            return original_noise + envelope * subsequence_noise
+        return original_noise + envelope * (subsequence_noise - original_noise)
+
+    def _effective_min_effect(self, base_kind: str, reference_scale: float) -> float:
+        effective_min_effect = float(self.min_effect_delta)
+        if base_kind in {"polynomial", "random-walk"}:
+            effective_min_effect = max(effective_min_effect, 0.75 * reference_scale)
+        return effective_min_effect
+
+    @staticmethod
+    def _preserve_noise_edges(
+        candidate_noise: np.ndarray,
+        original_noise: np.ndarray,
+    ) -> np.ndarray:
+        if candidate_noise.size > 0:
+            candidate_noise[0] = original_noise[0]
+            candidate_noise[-1] = original_noise[-1]
+        return candidate_noise
 
     @staticmethod
     def _linear_detrend(values: np.ndarray) -> np.ndarray:
@@ -153,7 +210,11 @@ class AnomalyVariance(BaseAnomaly):
             return candidate
 
         left = 1 if preserve_edges and candidate.size > 2 else 0
-        right = candidate.size - 1 if preserve_edges and candidate.size > 2 else candidate.size
+        right = (
+            candidate.size - 1
+            if preserve_edges and candidate.size > 2
+            else candidate.size
+        )
         if right <= left:
             return candidate
 

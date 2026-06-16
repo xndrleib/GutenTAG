@@ -44,7 +44,9 @@ def correlation_flip_window(
         orth_unit = orth / orth_norm
 
     current_corr = float(np.dot(ref_centered, anc_centered) / (ref_norm * anc_norm))
-    desired_corr = -current_corr if target_correlation is None else float(target_correlation)
+    desired_corr = (
+        -current_corr if target_correlation is None else float(target_correlation)
+    )
     desired_corr = float(np.clip(desired_corr, -0.995, 0.995))
     orth_scale = float(np.sqrt(max(0.0, 1.0 - desired_corr**2)))
     candidate_centered = ref_norm * (

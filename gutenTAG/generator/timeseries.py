@@ -7,6 +7,7 @@ from typing import Optional, List, Union
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 from numpy.random import SeedSequence
 
 from ..anomalies import Anomaly
@@ -128,7 +129,7 @@ class TimeSeries:
         axs[1, 0].legend()
         plt.show()
 
-    def build_figure_base_oscillation(self) -> plt.Figure:
+    def build_figure_base_oscillation(self) -> Figure:
         assert (
             self.timeseries is not None
         ), "TimeSeries is not generated. Please, do so before building a figure!"
@@ -178,7 +179,7 @@ class TimeSeries:
         if labels is None:
             labels = np.zeros(ts.shape[0])
         channel_names = list(map(lambda i: f"value-{i}", range(ts.shape[1])))
-        df = pd.DataFrame(ts, columns=channel_names)
+        df = pd.DataFrame(ts, columns=pd.Index(channel_names))
         df.index.name = INDEX_COLUMN_NAME
         df[LABEL_COLUMN_NAME] = labels
         return df

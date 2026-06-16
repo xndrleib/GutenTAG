@@ -7,7 +7,9 @@ import numpy as np
 from .pattern import affine_channel_repair
 
 
-def match_covariance(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -> np.ndarray:
+def match_covariance(
+    clean_segment: np.ndarray, anomalous_segment: np.ndarray
+) -> np.ndarray:
     """Whiten anomalous channels and recolor them to the clean covariance."""
 
     if clean_segment.size == 0 or anomalous_segment.size == 0:
@@ -21,13 +23,24 @@ def match_covariance(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -
     clean_mean = np.mean(clean_segment, axis=0)
     anomalous_mean = np.mean(anomalous_segment, axis=0)
     centered = np.asarray(anomalous_segment, dtype=np.float64) - anomalous_mean
-    clean_cov = np.cov(clean_segment, rowvar=False) + np.eye(clean_segment.shape[1]) * 1e-6
-    anomalous_cov = np.cov(anomalous_segment, rowvar=False) + np.eye(anomalous_segment.shape[1]) * 1e-6
+    clean_cov = (
+        np.cov(clean_segment, rowvar=False) + np.eye(clean_segment.shape[1]) * 1e-6
+    )
+    anomalous_cov = (
+        np.cov(anomalous_segment, rowvar=False)
+        + np.eye(anomalous_segment.shape[1]) * 1e-6
+    )
     try:
         eval_anom, evec_anom = np.linalg.eigh(anomalous_cov)
         eval_clean, evec_clean = np.linalg.eigh(clean_cov)
-        whitening = evec_anom @ np.diag(1.0 / np.sqrt(np.maximum(eval_anom, 1e-8))) @ evec_anom.T
-        recolor = evec_clean @ np.diag(np.sqrt(np.maximum(eval_clean, 1e-8))) @ evec_clean.T
+        whitening = (
+            evec_anom
+            @ np.diag(1.0 / np.sqrt(np.maximum(eval_anom, 1e-8)))
+            @ evec_anom.T
+        )
+        recolor = (
+            evec_clean @ np.diag(np.sqrt(np.maximum(eval_clean, 1e-8))) @ evec_clean.T
+        )
         candidates.append(centered @ whitening @ recolor + clean_mean)
     except np.linalg.LinAlgError:
         pass
@@ -35,13 +48,17 @@ def match_covariance(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -
     return min(candidates, key=lambda candidate: _rmse(candidate, clean_segment))
 
 
-def match_correlation(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -> np.ndarray:
+def match_correlation(
+    clean_segment: np.ndarray, anomalous_segment: np.ndarray
+) -> np.ndarray:
     """Restore the clean local correlation structure."""
 
     return match_covariance(clean_segment, anomalous_segment)
 
 
-def _multichannel_affine_repair(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -> np.ndarray:
+def _multichannel_affine_repair(
+    clean_segment: np.ndarray, anomalous_segment: np.ndarray
+) -> np.ndarray:
     clean = np.asarray(clean_segment, dtype=np.float64)
     anomalous = np.asarray(anomalous_segment, dtype=np.float64)
     if clean.shape != anomalous.shape or clean.size == 0:

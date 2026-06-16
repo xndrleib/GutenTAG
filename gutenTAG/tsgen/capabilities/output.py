@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .output_store import OutputStore, OutputTableManifest, OutputTableSpec, ParquetOutputError
+from .output_store import (
+    OutputStore,
+    OutputTableManifest,
+    OutputTableSpec,
+    ParquetOutputError,
+)
 
 
 class OutputWriter(OutputStore):

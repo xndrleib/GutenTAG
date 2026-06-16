@@ -5,15 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence, cast
 
 import pandas as pd
 
 from ..io import sanitize_json_value
 
-
 HASHED_CODE_SUFFIXES: tuple[str, ...] = (".py", ".yaml", ".yml", ".json")
-GENERATED_DATASET_SUFFIXES: tuple[str, ...] = (".csv", ".json", ".jsonl", ".yaml", ".yml")
+GENERATED_DATASET_SUFFIXES: tuple[str, ...] = (
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".yaml",
+    ".yml",
+)
 
 
 def canonical_json_hash(obj: object) -> str:
@@ -51,7 +56,9 @@ def table_content_hash(
         missing = [column for column in sort_by if column not in active.columns]
         if missing:
             raise ValueError(f"Cannot sort table by missing columns: {missing}")
-        active = active.sort_values(list(sort_by), kind="mergesort").reset_index(drop=True)
+        active = active.sort_values(list(sort_by), kind="mergesort").reset_index(
+            drop=True
+        )
     digest = hashlib.sha256()
     digest.update(",".join(map(str, active.columns)).encode("utf-8"))
     digest.update(b"\n")
@@ -63,7 +70,7 @@ def protocol_hash(protocol: object) -> str:
     """Hash a capability protocol or protocol-like mapping."""
 
     if hasattr(protocol, "to_dict"):
-        payload = protocol.to_dict()
+        payload = cast(Any, protocol).to_dict()
     elif isinstance(protocol, Mapping):
         payload = dict(protocol)
     else:
@@ -83,11 +90,7 @@ def dataset_content_hash(root: Path) -> str:
 
     dataset_root = Path(root)
     files = _collect_files((dataset_root,), suffixes=GENERATED_DATASET_SUFFIXES)
-    files = [
-        path
-        for path in files
-        if _is_dataset_artifact(path)
-    ]
+    files = [path for path in files if _is_dataset_artifact(path)]
     return _hash_file_set(files, root=dataset_root)
 
 

@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 import pandas as pd
 
-from .dataset import DatasetIndex, EventGroup, InstanceRecord, event_uid, read_timeseries_csv
+from .dataset import (
+    DatasetIndex,
+    EventGroup,
+    InstanceRecord,
+    event_uid,
+    read_timeseries_csv,
+)
 from .array_store import ArrayStore
 from .numerics import finite_float, log2_comb, segment
 from .ontology import canonical_witnesses_for_anomaly, repair_operator_for_anomaly
+from .pandas_typing import as_frame, as_series, column, frame_groupby, numeric_column
 from .protocol import CapabilityProtocol
 from .repair import repair_segment
 
@@ -35,16 +42,38 @@ def compute_describability_profiles(
 ) -> DescribabilityResult:
     """Compute witness sufficiency, repair gain, and descriptor complexity."""
 
-    obs_by_event = observability.groupby("event_id") if not observability.empty else {}
-    summary_by_event = event_summary.set_index("event_id") if not event_summary.empty else pd.DataFrame()
+    obs_by_event = (
+        frame_groupby(observability, "event_id") if not observability.empty else None
+    )
+    summary_by_event = (
+        event_summary.set_index("event_id")
+        if not event_summary.empty
+        else pd.DataFrame()
+    )
     rows: list[dict[str, object]] = []
     for instance in dataset.instances:
-        clean = arrays.get(instance, "clean") if arrays is not None else read_timeseries_csv(instance.clean_path)
-        anomalous = arrays.get(instance, "anomalous") if arrays is not None else read_timeseries_csv(instance.anomalous_path)
+        clean = (
+            arrays.get(instance, "clean")
+            if arrays is not None
+            else read_timeseries_csv(instance.clean_path)
+        )
+        anomalous = (
+            arrays.get(instance, "anomalous")
+            if arrays is not None
+            else read_timeseries_csv(instance.anomalous_path)
+        )
         for group in instance.event_groups:
             uid = event_uid(instance, group)
-            frame = obs_by_event.get_group(uid) if not observability.empty and uid in obs_by_event.groups else pd.DataFrame()
-            event_summary_row = summary_by_event.loc[uid] if not summary_by_event.empty and uid in summary_by_event.index else None
+            frame = (
+                as_frame(obs_by_event.get_group(uid))
+                if obs_by_event is not None and uid in obs_by_event.groups
+                else pd.DataFrame()
+            )
+            event_summary_row = (
+                summary_by_event.loc[uid]
+                if not summary_by_event.empty and uid in summary_by_event.index
+                else None
+            )
             rows.append(
                 _description_row(
                     instance=instance,
@@ -78,19 +107,36 @@ def _description_row(
         best_canonical_distance = 0.0
         canonical_witness_best = "none"
     else:
-        best_idx = observability_frame["distance_value"].astype(float).idxmax()
+        distance_values = numeric_column(observability_frame, "distance_value")
+        best_idx = distance_values.idxmax()
         best_distance = float(observability_frame.loc[best_idx, "distance_value"])
-        canonical_frame = observability_frame[observability_frame["witness_family"].isin(canonical)]
+        canonical_frame = as_frame(
+            observability_frame[
+                column(observability_frame, "witness_family").isin(list(canonical))
+            ]
+        )
         if canonical_frame.empty:
             best_canonical_distance = 0.0
             canonical_witness_best = "none"
         else:
-            canonical_idx = canonical_frame["distance_value"].astype(float).idxmax()
-            best_canonical_distance = float(canonical_frame.loc[canonical_idx, "distance_value"])
-            canonical_witness_best = str(canonical_frame.loc[canonical_idx, "witness_family"])
+            canonical_values = numeric_column(canonical_frame, "distance_value")
+            canonical_idx = canonical_values.idxmax()
+            best_canonical_distance = float(
+                canonical_frame.loc[canonical_idx, "distance_value"]
+            )
+            canonical_witness_best = str(
+                canonical_frame.loc[canonical_idx, "witness_family"]
+            )
     witness_sufficiency = best_canonical_distance / max(best_distance, 1e-12)
     repair_gain = _repair_gain(clean, anomalous, group)
-    support_concentration = float(event_summary_row.get("support_concentration_l2_max", float("nan"))) if event_summary_row is not None else float("nan")
+    support_concentration = (
+        _float_value(
+            event_summary_row.get("support_concentration_l2_max", float("nan")),
+            default=float("nan"),
+        )
+        if event_summary_row is not None
+        else float("nan")
+    )
     description_length_bits = _description_length_bits(instance, group, canonical)
     return {
         "event_id": event_uid(instance, group),
@@ -108,14 +154,24 @@ def _description_row(
         "best_canonical_distance": finite_float(best_canonical_distance),
         "witness_sufficiency": finite_float(witness_sufficiency),
         "repair_gain": finite_float(repair_gain),
-        "support_concentration_l2": finite_float(support_concentration, default=float("nan")),
+        "support_concentration_l2": finite_float(
+            support_concentration, default=float("nan")
+        ),
         "description_length_bits": finite_float(description_length_bits),
-        "description_risk_proxy": finite_float((1.0 - min(1.0, witness_sufficiency)) + (1.0 - max(0.0, repair_gain))),
+        "description_risk_proxy": finite_float(
+            (1.0 - min(1.0, witness_sufficiency)) + (1.0 - max(0.0, repair_gain))
+        ),
     }
 
 
 def _repair_gain(clean: np.ndarray, anomalous: np.ndarray, group: EventGroup) -> float:
-    channels = tuple(sorted(set(group.group_channels) | set(group.context_channels) | set(group.intervention_channels)))
+    channels = tuple(
+        sorted(
+            set(group.group_channels)
+            | set(group.context_channels)
+            | set(group.intervention_channels)
+        )
+    )
     if not channels:
         channels = tuple(range(clean.shape[1]))
     clean_seg = segment(clean, group.start, group.end, channels)
@@ -135,9 +191,18 @@ def _repair_gain(clean: np.ndarray, anomalous: np.ndarray, group: EventGroup) ->
     return float(max(-1.0, min(1.0, 1.0 - residual / raw)))
 
 
-def _description_length_bits(instance: InstanceRecord, group: EventGroup, canonical_witnesses: Sequence[str]) -> float:
+def _description_length_bits(
+    instance: InstanceRecord, group: EventGroup, canonical_witnesses: Sequence[str]
+) -> float:
     temporal_bits = 2.0 * math.log2(max(instance.length, 2))
-    arity = max(1, len(set(group.group_channels) | set(group.context_channels) | set(group.intervention_channels)))
+    arity = max(
+        1,
+        len(
+            set(group.group_channels)
+            | set(group.context_channels)
+            | set(group.intervention_channels)
+        ),
+    )
     channel_bits = log2_comb(instance.channels, min(arity, instance.channels))
     witness_bits = math.log2(max(2, len(canonical_witnesses)))
     constraint_bits = math.log2(16.0)
@@ -147,10 +212,14 @@ def _description_length_bits(instance: InstanceRecord, group: EventGroup, canoni
 def _summarize(profile: pd.DataFrame) -> pd.DataFrame:
     if profile.empty:
         return pd.DataFrame()
-    grouped = profile.groupby(["variant_id", "anomaly_type", "constraint_tag", "semantic_scope"], dropna=False)
+    grouped = profile.groupby(
+        ["variant_id", "anomaly_type", "constraint_tag", "semantic_scope"], dropna=False
+    )
     rows: list[dict[str, object]] = []
     for key, frame in grouped:
-        variant_id, anomaly_type, constraint_tag, semantic_scope = key
+        variant_id, anomaly_type, constraint_tag, semantic_scope = cast(
+            tuple[object, object, object, object], key
+        )
         rows.append(
             {
                 "variant_id": variant_id,
@@ -158,10 +227,16 @@ def _summarize(profile: pd.DataFrame) -> pd.DataFrame:
                 "constraint_tag": constraint_tag,
                 "semantic_scope": semantic_scope,
                 "event_count": int(len(frame)),
-                "median_witness_sufficiency": float(frame["witness_sufficiency"].median()),
+                "median_witness_sufficiency": float(
+                    frame["witness_sufficiency"].median()
+                ),
                 "median_repair_gain": float(frame["repair_gain"].median()),
-                "median_description_length_bits": float(frame["description_length_bits"].median()),
-                "median_description_risk_proxy": float(frame["description_risk_proxy"].median()),
+                "median_description_length_bits": float(
+                    frame["description_length_bits"].median()
+                ),
+                "median_description_risk_proxy": float(
+                    frame["description_risk_proxy"].median()
+                ),
             }
         )
     return pd.DataFrame(rows)
@@ -171,15 +246,27 @@ def _description_stability(profile: pd.DataFrame) -> pd.DataFrame:
     if profile.empty:
         return pd.DataFrame()
     grouped = profile.groupby(
-        ["variant_id", "anomaly_type", "constraint_tag", "semantic_scope", "repair_operator"],
+        [
+            "variant_id",
+            "anomaly_type",
+            "constraint_tag",
+            "semantic_scope",
+            "repair_operator",
+        ],
         dropna=False,
     )
     rows: list[dict[str, object]] = []
     for key, frame in grouped:
-        variant_id, anomaly_type, constraint_tag, semantic_scope, repair_operator = key
-        witness_values = frame["witness_sufficiency"].astype(float)
-        repair_values = frame["repair_gain"].astype(float)
-        risk_values = frame["description_risk_proxy"].astype(float)
+        (
+            variant_id,
+            anomaly_type,
+            constraint_tag,
+            semantic_scope,
+            repair_operator,
+        ) = cast(tuple[object, object, object, object, object], key)
+        witness_values = as_series(frame["witness_sufficiency"]).astype(float)
+        repair_values = as_series(frame["repair_gain"]).astype(float)
+        risk_values = as_series(frame["description_risk_proxy"]).astype(float)
         rows.append(
             {
                 "variant_id": variant_id,
@@ -193,27 +280,43 @@ def _description_stability(profile: pd.DataFrame) -> pd.DataFrame:
                 "description_risk_iqr": _iqr(risk_values),
                 "witness_sufficiency_cv": _coefficient_of_variation(witness_values),
                 "repair_gain_cv": _coefficient_of_variation(repair_values),
-                "description_stability_status": _stability_status(witness_values, repair_values),
+                "description_stability_status": _stability_status(
+                    witness_values, repair_values
+                ),
             }
         )
     return pd.DataFrame(rows)
 
 
 def _iqr(values: pd.Series) -> float:
-    finite = values[np.isfinite(values)]
-    if finite.empty:
+    finite = _finite_array(values)
+    if finite.size == 0:
         return float("nan")
-    return float(finite.quantile(0.75) - finite.quantile(0.25))
+    return float(np.quantile(finite, 0.75) - np.quantile(finite, 0.25))
 
 
 def _coefficient_of_variation(values: pd.Series) -> float:
-    finite = values[np.isfinite(values)]
-    if finite.empty:
+    finite = _finite_array(values)
+    if finite.size == 0:
         return float("nan")
-    mean = float(finite.mean())
+    mean = float(np.mean(finite))
     if abs(mean) <= 1e-12:
-        return 0.0 if float(finite.std(ddof=0)) <= 1e-12 else float("inf")
-    return float(finite.std(ddof=0) / abs(mean))
+        return 0.0 if float(np.std(finite, ddof=0)) <= 1e-12 else float("inf")
+    return float(np.std(finite, ddof=0) / abs(mean))
+
+
+def _finite_array(values: pd.Series) -> np.ndarray:
+    array = as_series(pd.to_numeric(values, errors="coerce")).to_numpy(
+        dtype=np.dtype(np.float64)
+    )
+    return array[np.isfinite(array)]
+
+
+def _float_value(value: object, *, default: float = 0.0) -> float:
+    try:
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _stability_status(witness_values: pd.Series, repair_values: pd.Series) -> str:

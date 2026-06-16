@@ -23,40 +23,16 @@ class DictSanitizer:
         Taken from [numpyencoder](https://github.com/hmallen/numpyencoder/blob/f8199a61ccde25f829444a9df4b21bcb2d1de8f2/numpyencoder/numpyencoder.py)
         """
 
-        if isinstance(
-            obj,
-            (
-                int,
-                np.intc,
-                np.intp,
-                np.int8,
-                np.int16,
-                np.int32,
-                np.int64,
-                np.uint8,
-                np.uint16,
-                np.uint32,
-                np.uint64,
-            ),
-        ):
-            return int(obj)
-
-        elif isinstance(obj, (float, np.float16, np.float32, np.float64)):
-            return float(obj)
-
-        elif isinstance(obj, (np.complex64, np.complex128, np.complex256)):
-            return {"real": obj.real, "imag": obj.imag}
-
-        elif isinstance(obj, (np.ndarray,)):
+        if isinstance(obj, np.ndarray):
             return obj.tolist()
 
-        elif isinstance(obj, (bool, np.bool)):
-            return bool(obj)
-
-        # We eliminate unknown types here. If this is a problem for you, please
-        # create an issue.
-        elif isinstance(obj, np.void):
-            return None
+        if isinstance(obj, np.generic):
+            scalar = obj.item()
+            if isinstance(scalar, (bytes, bytearray, memoryview)):
+                return None
+            if isinstance(scalar, complex):
+                return {"real": scalar.real, "imag": scalar.imag}
+            return scalar
 
     def _sanitize_value(self, obj: Any) -> Any:
         if isinstance(obj, dict):

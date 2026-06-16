@@ -26,7 +26,11 @@ def repair_segment(
     operator = str(repair_operator or "")
     if tag.startswith("location") or tag.startswith("point") or "mean" in operator:
         return match_mean(clean_segment, anomalous_segment)
-    if tag.startswith("dependence.covariance") or tag.startswith("dependence.subspace") or "covariance" in operator:
+    if (
+        tag.startswith("dependence.covariance")
+        or tag.startswith("dependence.subspace")
+        or "covariance" in operator
+    ):
         return match_covariance(clean_segment, anomalous_segment)
     if tag.startswith("dependence.correlation") or "correlation" in operator:
         return match_correlation(clean_segment, anomalous_segment)

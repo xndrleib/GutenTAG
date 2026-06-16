@@ -40,7 +40,9 @@ def build_event_registry_records(
     records: list[dict[str, Any]] = []
     for instance in dataset.instances:
         for group in instance.event_groups:
-            genotype = _build_problem_genotype(instance, group, active_registry, provenance)
+            genotype = _build_problem_genotype(
+                instance, group, active_registry, provenance
+            )
             records.append(
                 {
                     "event_id": event_uid(instance, group),
@@ -65,7 +67,9 @@ def build_event_registry_records(
                     "label_channel": "oracle",
                     "event_scope": group.event_scope,
                     "purity_hint": group.purity_hint,
-                    "legacy_provenance": None if provenance == "generated" else provenance,
+                    "legacy_provenance": (
+                        None if provenance == "generated" else provenance
+                    ),
                 }
             )
     return _sort_records(records, ("event_id",))
@@ -83,14 +87,18 @@ def build_problem_genotype_registry(
     records_by_id: dict[str, dict[str, Any]] = {}
     for instance in dataset.instances:
         for group in instance.event_groups:
-            genotype = _build_problem_genotype(instance, group, active_registry, provenance)
+            genotype = _build_problem_genotype(
+                instance, group, active_registry, provenance
+            )
             payload = genotype.to_dict()
             existing = records_by_id.get(genotype.genotype_id)
             if existing is None:
                 records_by_id[genotype.genotype_id] = payload
             elif existing != payload:
-                raise ValueError(f"Conflicting genotype payload for {genotype.genotype_id}")
-    return _sort_records(records_by_id.values(), ("genotype_id",))
+                raise ValueError(
+                    f"Conflicting genotype payload for {genotype.genotype_id}"
+                )
+    return _sort_records(list(records_by_id.values()), ("genotype_id",))
 
 
 def build_requested_effect_records(
@@ -105,7 +113,9 @@ def build_requested_effect_records(
     records: list[dict[str, Any]] = []
     for instance in dataset.instances:
         for group in instance.event_groups:
-            genotype = _build_problem_genotype(instance, group, active_registry, provenance)
+            genotype = _build_problem_genotype(
+                instance, group, active_registry, provenance
+            )
             records.append(
                 {
                     "requested_effect_id": _requested_effect_id(instance, group),
@@ -141,8 +151,12 @@ def write_v12_metadata_registries(
     metadata_dir = root / "metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    events = build_event_registry_records(dataset, active_registry, provenance=provenance)
-    genotypes = build_problem_genotype_registry(dataset, active_registry, provenance=provenance)
+    events = build_event_registry_records(
+        dataset, active_registry, provenance=provenance
+    )
+    genotypes = build_problem_genotype_registry(
+        dataset, active_registry, provenance=provenance
+    )
     requested_effects = build_requested_effect_records(
         dataset,
         active_registry,
@@ -225,13 +239,17 @@ def _build_problem_genotype(
             "anomaly_type": group.anomaly_type,
             "operator_family": _operator_family(violated),
             "channel_role_policy": (
-                active_contract.channel_role_policy if active_contract is not None else {}
+                active_contract.channel_role_policy
+                if active_contract is not None
+                else {}
             ),
         },
         constraints={
             "violated": violated,
             "forbidden_shortcuts": (
-                active_contract.forbidden_shortcuts if active_contract is not None else ()
+                active_contract.forbidden_shortcuts
+                if active_contract is not None
+                else ()
             ),
             "canonical_witnesses": canonical_witnesses,
         },
@@ -239,7 +257,10 @@ def _build_problem_genotype(
             "policy": (
                 active_contract.support_policy
                 if active_contract is not None
-                else {"type": "localized_interval", "expected_primary_evidence": "unknown"}
+                else {
+                    "type": "localized_interval",
+                    "expected_primary_evidence": "unknown",
+                }
             ),
             "event_support_in": "metadata/events.jsonl",
         },
@@ -288,10 +309,14 @@ def _warnings_for_group(
     return tuple(warnings)
 
 
-def _has_required_channel_roles(group: EventGroup, contract: AnomalyContract | None) -> bool:
+def _has_required_channel_roles(
+    group: EventGroup, contract: AnomalyContract | None
+) -> bool:
     if contract is None:
         return False
-    min_projection = int(contract.channel_role_policy.get("canonical_min_projection_size", 1))
+    min_projection = int(
+        contract.channel_role_policy.get("canonical_min_projection_size", 1)
+    )
     context_min = int(contract.channel_role_policy.get("context_min", 0))
     intervention_min = int(contract.channel_role_policy.get("intervention_min", 1))
     return (

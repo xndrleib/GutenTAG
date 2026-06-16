@@ -9,7 +9,13 @@ import numpy as np
 import pandas as pd
 
 from ..array_store import ArrayStore
-from ..dataset import DatasetIndex, EventGroup, InstanceRecord, event_uid, read_timeseries_csv
+from ..dataset import (
+    DatasetIndex,
+    EventGroup,
+    InstanceRecord,
+    event_uid,
+    read_timeseries_csv,
+)
 from ..numerics import finite_float
 
 
@@ -22,9 +28,19 @@ def compute_support_integrity(
 
     rows: list[dict[str, object]] = []
     for instance in dataset.instances:
-        clean = arrays.get(instance, "clean") if arrays is not None else read_timeseries_csv(instance.clean_path)
-        anomalous = arrays.get(instance, "anomalous") if arrays is not None else read_timeseries_csv(instance.anomalous_path)
-        delta = np.asarray(anomalous, dtype=np.float64) - np.asarray(clean, dtype=np.float64)
+        clean = (
+            arrays.get(instance, "clean")
+            if arrays is not None
+            else read_timeseries_csv(instance.clean_path)
+        )
+        anomalous = (
+            arrays.get(instance, "anomalous")
+            if arrays is not None
+            else read_timeseries_csv(instance.anomalous_path)
+        )
+        delta = np.asarray(anomalous, dtype=np.float64) - np.asarray(
+            clean, dtype=np.float64
+        )
         for group in instance.event_groups:
             rows.append(_support_row(instance, group, delta))
     return pd.DataFrame(rows)
@@ -36,7 +52,11 @@ def _support_row(
     delta: np.ndarray,
 ) -> dict[str, object]:
     channels = _audit_channels(group, instance.channels)
-    energy = np.sum(np.square(delta[:, channels]), axis=1) if channels else np.sum(np.square(delta), axis=1)
+    energy = (
+        np.sum(np.square(delta[:, channels]), axis=1)
+        if channels
+        else np.sum(np.square(delta), axis=1)
+    )
     other_support_mask = _other_event_support_mask(instance, group)
     near_start, near_end = _near_field_bounds(group, instance.length)
     known_other_mask = other_support_mask.copy()
@@ -74,7 +94,9 @@ def _support_row(
         "support_concentration_80_width": finite_float(width80, default=math.nan),
         "support_concentration_90_width": finite_float(width90, default=math.nan),
         "canonical_inside_share": finite_float(inside_share),
-        "support_status": _support_status(group, total, inside_share, local_share, far_share),
+        "support_status": _support_status(
+            group, total, inside_share, local_share, far_share
+        ),
     }
 
 
@@ -99,7 +121,11 @@ def _support_status(
 
 
 def _audit_channels(group: EventGroup, channels: int) -> tuple[int, ...]:
-    selected = sorted(set(group.intervention_channels) | set(group.group_channels) | set(group.context_channels))
+    selected = sorted(
+        set(group.intervention_channels)
+        | set(group.group_channels)
+        | set(group.context_channels)
+    )
     return tuple(channel for channel in selected if 0 <= int(channel) < int(channels))
 
 
@@ -114,7 +140,9 @@ def _near_field_bounds(group: EventGroup, length: int) -> tuple[int, int]:
     return max(0, int(group.start) - width), min(int(length), int(group.end) + width)
 
 
-def _other_event_support_mask(instance: InstanceRecord, group: EventGroup) -> np.ndarray:
+def _other_event_support_mask(
+    instance: InstanceRecord, group: EventGroup
+) -> np.ndarray:
     mask = np.zeros(int(instance.length), dtype=bool)
     for other in instance.event_groups:
         if other.group_id == group.group_id:

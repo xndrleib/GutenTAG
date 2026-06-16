@@ -9,8 +9,16 @@ import pandas as pd
 from gutenTAG.tsgen.capabilities.array_store import ArrayStore
 from gutenTAG.tsgen.capabilities.cache import CacheStore
 from gutenTAG.tsgen.capabilities.dataset import InstanceRecord
-from gutenTAG.tsgen.capabilities.hashes import code_version_hash, file_sha256, table_content_hash
-from gutenTAG.tsgen.capabilities.partitions import PartitionSpec, partition_sequence, run_partitions
+from gutenTAG.tsgen.capabilities.hashes import (
+    code_version_hash,
+    file_sha256,
+    table_content_hash,
+)
+from gutenTAG.tsgen.capabilities.partitions import (
+    PartitionSpec,
+    partition_sequence,
+    run_partitions,
+)
 from gutenTAG.tsgen.capabilities.rolling import RollingStats
 
 
@@ -78,7 +86,9 @@ class TestCapabilityFoundation(unittest.TestCase):
                 fingerprint=changed,
                 compute=compute,
             )
-            metadata = json.loads(cache.metadata_path("demo", "p00000").read_text(encoding="utf-8"))
+            metadata = json.loads(
+                cache.metadata_path("demo", "p00000").read_text(encoding="utf-8")
+            )
 
             self.assertEqual(calls["count"], 2)
             self.assertEqual(first.iloc[0]["x"], 1)
@@ -94,35 +104,82 @@ class TestCapabilityFoundation(unittest.TestCase):
         ends = np.asarray([5, 11, 22, 40], dtype=np.int64)
         stats = RollingStats(series)
 
-        expected_mean = np.vstack([series[start:end][:, [0, 2]].mean(axis=0) for start, end in zip(starts, ends)])
-        expected_variance = np.vstack([series[start:end][:, [0, 2]].var(axis=0) for start, end in zip(starts, ends)])
-        expected_cov = np.asarray([np.cov(series[start:end, 0], series[start:end, 1], bias=True)[0, 1] for start, end in zip(starts, ends)])
-        expected_corr = np.asarray([np.corrcoef(series[start:end, 0], series[start:end, 1])[0, 1] for start, end in zip(starts, ends)])
-        expected_energy = np.asarray([np.sum(series[start:end][:, [0, 2]] ** 2) for start, end in zip(starts, ends)])
+        expected_mean = np.vstack(
+            [
+                series[start:end][:, [0, 2]].mean(axis=0)
+                for start, end in zip(starts, ends)
+            ]
+        )
+        expected_variance = np.vstack(
+            [
+                series[start:end][:, [0, 2]].var(axis=0)
+                for start, end in zip(starts, ends)
+            ]
+        )
+        expected_cov = np.asarray(
+            [
+                np.cov(series[start:end, 0], series[start:end, 1], bias=True)[0, 1]
+                for start, end in zip(starts, ends)
+            ]
+        )
+        expected_corr = np.asarray(
+            [
+                np.corrcoef(series[start:end, 0], series[start:end, 1])[0, 1]
+                for start, end in zip(starts, ends)
+            ]
+        )
+        expected_energy = np.asarray(
+            [
+                np.sum(series[start:end][:, [0, 2]] ** 2)
+                for start, end in zip(starts, ends)
+            ]
+        )
 
         self.assertTrue(np.allclose(stats.mean(starts, ends, [0, 2]), expected_mean))
-        self.assertTrue(np.allclose(stats.variance(starts, ends, [0, 2]), expected_variance))
+        self.assertTrue(
+            np.allclose(stats.variance(starts, ends, [0, 2]), expected_variance)
+        )
         self.assertTrue(np.allclose(stats.covariance(starts, ends, 0, 1), expected_cov))
-        self.assertTrue(np.allclose(stats.correlation(starts, ends, 0, 1), expected_corr))
-        self.assertTrue(np.allclose(stats.energy(starts, ends, [0, 2]), expected_energy))
+        self.assertTrue(
+            np.allclose(stats.correlation(starts, ends, 0, 1), expected_corr)
+        )
+        self.assertTrue(
+            np.allclose(stats.energy(starts, ends, [0, 2]), expected_energy)
+        )
 
     def test_partition_sequence_and_parallel_execution_are_deterministic(self) -> None:
         partitions = partition_sequence(tuple(range(10)), partition_size=3)
         serial = run_partitions(partitions, _sum_partition, n_jobs=1)
         parallel = run_partitions(partitions, _sum_partition, n_jobs=2)
 
-        self.assertEqual([item.partition_id for item in partitions], ["p00000", "p00001", "p00002", "p00003"])
+        self.assertEqual(
+            [item.partition_id for item in partitions],
+            ["p00000", "p00001", "p00002", "p00003"],
+        )
         self.assertEqual([item.value for item in serial], [3, 12, 21, 9])
-        self.assertEqual([item.value for item in parallel], [item.value for item in serial])
+        self.assertEqual(
+            [item.value for item in parallel], [item.value for item in serial]
+        )
 
     def test_array_store_metadata_records_source_hash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            instance_dir = root / "variants" / "sine__mean__p00" / "train" / "instances" / "instance_000"
+            instance_dir = (
+                root
+                / "variants"
+                / "sine__mean__p00"
+                / "train"
+                / "instances"
+                / "instance_000"
+            )
             instance_dir.mkdir(parents=True)
             values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=float)
-            pd.DataFrame(values, columns=["ch_0", "ch_1"]).to_csv(instance_dir / "clean.csv", index=False)
-            pd.DataFrame(values + 1.0, columns=["ch_0", "ch_1"]).to_csv(instance_dir / "anomalous.csv", index=False)
+            pd.DataFrame(values, columns=["ch_0", "ch_1"]).to_csv(
+                instance_dir / "clean.csv", index=False
+            )
+            pd.DataFrame(values + 1.0, columns=["ch_0", "ch_1"]).to_csv(
+                instance_dir / "anomalous.csv", index=False
+            )
             record = InstanceRecord(
                 dataset_root=root,
                 variant_id="sine__mean__p00",
@@ -142,11 +199,21 @@ class TestCapabilityFoundation(unittest.TestCase):
 
             store = ArrayStore(cache_dir=root / "cache", mmap=True)
             store.materialize((record,))
-            metadata_path = root / "cache" / "arrays" / "sine__mean__p00" / "train" / "instance_000" / "clean.json"
+            metadata_path = (
+                root
+                / "cache"
+                / "arrays"
+                / "sine__mean__p00"
+                / "train"
+                / "instance_000"
+                / "clean.json"
+            )
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
             self.assertEqual(metadata["array_store_version"], "synthgen.array_store.v2")
-            self.assertEqual(metadata["source"]["sha256"], file_sha256(instance_dir / "clean.csv"))
+            self.assertEqual(
+                metadata["source"]["sha256"], file_sha256(instance_dir / "clean.csv")
+            )
 
 
 if __name__ == "__main__":

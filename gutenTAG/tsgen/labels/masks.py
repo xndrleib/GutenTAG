@@ -42,7 +42,11 @@ def build_label_masks(
         labels_any[start:end, 0] = 1
         intervention_channels = _event_channels(
             event,
-            preferred_keys=("operator_target_channels", "intervention_channels", "channel"),
+            preferred_keys=(
+                "operator_target_channels",
+                "intervention_channels",
+                "channel",
+            ),
         )
         context_channels = _event_channels(
             event,
@@ -105,5 +109,5 @@ def _clip_index(value: Any, length: int) -> int:
 
 
 def _write_label_csv(path: Path, values: np.ndarray, columns: Sequence[str]) -> None:
-    df = pd.DataFrame(values.astype(np.int8), columns=list(columns))
+    df = pd.DataFrame(values.astype(np.int8), columns=pd.Index(list(columns)))
     df.to_csv(path, index=False)

@@ -70,7 +70,9 @@ class TestCapabilityLayerV1(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(certificate["capability_certificate_version"], "synthgen.capability.v1")
+            self.assertEqual(
+                certificate["capability_certificate_version"], "synthgen.capability.v1"
+            )
             self.assertGreater(certificate["summary"]["instance_count"], 0)
             self.assertGreater(certificate["summary"]["event_group_count"], 0)
             self.assertIn("protocol_hash", certificate)
@@ -98,9 +100,16 @@ class TestCapabilityLayerV1(unittest.TestCase):
             self.assertFalse(descriptions.empty)
             self.assertTrue((observability["distance_value"] >= 0).all())
             self.assertTrue(set(frontier["alpha"]).issubset({0.10, 0.05}))
-            self.assertTrue(((descriptions["witness_sufficiency"] >= 0) & (descriptions["witness_sufficiency"] <= 1.0 + 1e-9)).all())
+            self.assertTrue(
+                (
+                    (descriptions["witness_sufficiency"] >= 0)
+                    & (descriptions["witness_sufficiency"] <= 1.0 + 1e-9)
+                ).all()
+            )
 
-            parsed = json.loads((output_dir / "capability_certificate.json").read_text(encoding="utf-8"))
+            parsed = json.loads(
+                (output_dir / "capability_certificate.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(parsed["summary"], certificate["summary"])
 
     def test_capability_protocol_rejects_unknown_keys(self) -> None:

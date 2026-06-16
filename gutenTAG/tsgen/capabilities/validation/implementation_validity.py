@@ -10,6 +10,13 @@ from ...contracts import ContractRegistry
 from ..array_store import ArrayStore
 from ..cache import CacheStore
 from ..dataset import DatasetIndex
+from ..pandas_typing import (
+    as_frame,
+    as_series,
+    frame_groupby,
+    numeric_column,
+    sorted_frame,
+)
 from ..protocol import CapabilityProtocol
 from .attribution import compute_detector_attribution
 from .boundary import compute_boundary_audit
@@ -98,9 +105,15 @@ def _implementation_validity(
     detector_attribution: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
-    boundary_by_event = boundary.set_index("event_id") if not boundary.empty else pd.DataFrame()
-    shortcut_by_event = shortcut.set_index("event_id") if not shortcut.empty else pd.DataFrame()
-    realized_by_event = realized.set_index("event_id") if not realized.empty else pd.DataFrame()
+    boundary_by_event = (
+        boundary.set_index("event_id") if not boundary.empty else pd.DataFrame()
+    )
+    shortcut_by_event = (
+        shortcut.set_index("event_id") if not shortcut.empty else pd.DataFrame()
+    )
+    realized_by_event = (
+        realized.set_index("event_id") if not realized.empty else pd.DataFrame()
+    )
     attribution_by_event = _attribution_by_event(detector_attribution)
     control_failures = _negative_control_failures(negative_controls)
     for _, support_row in support.iterrows():
@@ -146,7 +159,9 @@ def _implementation_validity(
                 "inside_mass_share": support_row.get("inside_mass_share"),
                 "far_field_mass_share": support_row.get("far_field_mass_share"),
                 "boundary_energy_share": boundary_row.get("boundary_energy_share"),
-                "canonical_vs_univariate_ratio": shortcut_row.get("canonical_vs_univariate_ratio"),
+                "canonical_vs_univariate_ratio": shortcut_row.get(
+                    "canonical_vs_univariate_ratio"
+                ),
                 "realized_offset": realized_row.get("realized_offset"),
                 "realized_log_var_ratio": realized_row.get("realized_log_var_ratio"),
                 "realized_fisher_shift": realized_row.get("realized_fisher_shift"),
@@ -155,27 +170,29 @@ def _implementation_validity(
     return pd.DataFrame(rows)
 
 
-def _attribution_by_event(detector_attribution: pd.DataFrame | None) -> dict[str, dict[str, object]]:
+def _attribution_by_event(
+    detector_attribution: pd.DataFrame | None,
+) -> dict[str, dict[str, object]]:
     if detector_attribution is None or detector_attribution.empty:
         return {}
     if "event_id" not in detector_attribution.columns:
         return {}
     active = detector_attribution
     if "alpha" in active.columns:
-        alpha_values = pd.to_numeric(active["alpha"], errors="coerce")
-        if alpha_values.notna().any():
+        alpha_values = numeric_column(active, "alpha")
+        if bool(alpha_values.notna().any()):
             min_alpha = float(alpha_values.min())
-            active = active[alpha_values.sub(min_alpha).abs() <= 1e-12]
+            active = as_frame(active[alpha_values.sub(min_alpha).abs() <= 1e-12])
     sort_columns = [
         column
         for column in ("event_id", "rank_within_event", "scan_level_p_value")
         if column in active.columns
     ]
     if sort_columns:
-        active = active.sort_values(sort_columns)
+        active = sorted_frame(active, sort_columns)
     return {
         str(event_id): dict(group.iloc[0])
-        for event_id, group in active.groupby("event_id", dropna=False)
+        for event_id, group in frame_groupby(active, "event_id", dropna=False)
     }
 
 
@@ -185,7 +202,7 @@ def _lookup(frame: pd.DataFrame, event_id: str) -> dict[str, object]:
     row = frame.loc[event_id]
     if isinstance(row, pd.DataFrame):
         row = row.iloc[0]
-    return dict(row)
+    return dict(as_series(row))
 
 
 def _overall_status(
@@ -202,9 +219,12 @@ def _overall_status(
         return "support_leakage_suspected"
     if boundary_status == "boundary_primary_detection_cause":
         return "boundary_artifact_suspected"
-    if shortcut_status == "shortcut_dominated" and not _has_confirmed_canonical_detection(
-        detector_primary_detection_cause,
-        detector_best_canonical_detected,
+    if (
+        shortcut_status == "shortcut_dominated"
+        and not _has_confirmed_canonical_detection(
+            detector_primary_detection_cause,
+            detector_best_canonical_detected,
+        )
     ):
         return "detected_wrong_reason"
     if negative_control_failed_count > 0:
@@ -229,7 +249,7 @@ def _has_confirmed_canonical_detection(
 def _as_bool(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes"}
-    if pd.isna(value):
+    if bool(pd.isna(value)):
         return False
     return bool(value)
 

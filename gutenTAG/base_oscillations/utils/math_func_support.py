@@ -2,7 +2,6 @@ from typing import Optional, Callable
 
 import numpy as np
 
-
 SAMPLING_F = 100  # in Hz
 
 

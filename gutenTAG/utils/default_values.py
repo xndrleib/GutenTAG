@@ -2,7 +2,6 @@ from typing import Any, Dict
 
 from .global_variables import BASE_OSCILLATIONS, ANOMALIES, PARAMETERS
 
-
 default_values: Dict[str, Dict[str, Any]] = {
     BASE_OSCILLATIONS: {
         PARAMETERS.LENGTH: 10000,

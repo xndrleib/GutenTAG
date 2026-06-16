@@ -7,7 +7,9 @@ import numpy as np
 from .pattern import affine_channel_repair
 
 
-def match_variance(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -> np.ndarray:
+def match_variance(
+    clean_segment: np.ndarray, anomalous_segment: np.ndarray
+) -> np.ndarray:
     """Match local scale using the best monotonic oracle repair candidate."""
 
     if clean_segment.size == 0 or anomalous_segment.size == 0:

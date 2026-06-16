@@ -12,6 +12,8 @@ import pandas as pd
 
 from ..io import write_json
 
+CsvCompression = Literal["infer", "gzip", "bz2", "zip", "xz", "zstd", "tar"]
+
 
 class ParquetOutputError(RuntimeError):
     """Raised when parquet output is requested but cannot be written."""
@@ -126,7 +128,10 @@ class OutputStore:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         if self.output_format not in {"csv", "parquet", "both"}:
             raise ValueError(f"Unsupported output format: {self.output_format}")
-        if self.output_format in {"parquet", "both"} and not self.allow_parquet_fallback:
+        if (
+            self.output_format in {"parquet", "both"}
+            and not self.allow_parquet_fallback
+        ):
             _require_parquet_engine()
 
     def write_table(
@@ -156,24 +161,74 @@ class OutputStore:
         """
 
         table_spec = spec or OutputTableSpec(name=name)
-        canonical_path, canonical_format = self._write_canonical_table(filename, frame, table_spec)
-        file_hashes = {self._relative_path(canonical_path): _file_sha256(canonical_path)}
+        canonical_path, canonical_format = self._write_canonical_table(
+            filename, frame, table_spec
+        )
+        file_hashes = {
+            self._relative_path(canonical_path): _file_sha256(canonical_path)
+        }
+        release_csv_path, legacy_csv_path = self._write_release_csv_views(
+            filename,
+            frame,
+            table_spec,
+            canonical_path,
+            file_hashes,
+        )
+        manifest = self._build_table_manifest(
+            table_spec=table_spec,
+            frame=frame,
+            canonical_format=canonical_format,
+            canonical_path=canonical_path,
+            file_hashes=file_hashes,
+            release_csv_path=release_csv_path,
+            legacy_csv_path=legacy_csv_path,
+        )
+        record = manifest.to_dict()
+        self.table_records.append(record)
+        self._tables_by_name[name] = record
+        return manifest
+
+    def _write_release_csv_views(
+        self,
+        filename: str,
+        frame: pd.DataFrame,
+        table_spec: OutputTableSpec,
+        canonical_path: Path,
+        file_hashes: dict[str, str],
+    ) -> tuple[Path | None, Path | None]:
         release_csv_path: Path | None = None
         legacy_csv_path: Path | None = None
-
         if self.release_csv and table_spec.release_csv:
             release_csv_path = self.output_dir / "tables_csv" / filename
             if release_csv_path != canonical_path:
                 _write_csv(release_csv_path, frame)
-            file_hashes[self._relative_path(release_csv_path)] = _file_sha256(release_csv_path)
-
+            file_hashes[self._relative_path(release_csv_path)] = _file_sha256(
+                release_csv_path
+            )
         if self.legacy_csv and self.release_csv and table_spec.release_csv:
             legacy_csv_path = self.output_dir / filename
-            if legacy_csv_path != release_csv_path and legacy_csv_path != canonical_path:
+            if (
+                legacy_csv_path != release_csv_path
+                and legacy_csv_path != canonical_path
+            ):
                 _write_csv(legacy_csv_path, frame)
-            file_hashes[self._relative_path(legacy_csv_path)] = _file_sha256(legacy_csv_path)
+            file_hashes[self._relative_path(legacy_csv_path)] = _file_sha256(
+                legacy_csv_path
+            )
+        return release_csv_path, legacy_csv_path
 
-        manifest = OutputTableManifest(
+    def _build_table_manifest(
+        self,
+        *,
+        table_spec: OutputTableSpec,
+        frame: pd.DataFrame,
+        canonical_format: str,
+        canonical_path: Path,
+        file_hashes: dict[str, str],
+        release_csv_path: Path | None,
+        legacy_csv_path: Path | None,
+    ) -> OutputTableManifest:
+        return OutputTableManifest(
             name=table_spec.name,
             schema_version=table_spec.schema_version,
             row_count=int(len(frame)),
@@ -186,13 +241,17 @@ class OutputStore:
             file_hashes=file_hashes,
             primary_key=table_spec.primary_key,
             partition_by=table_spec.partition_by,
-            release_csv_path=self._relative_path(release_csv_path) if release_csv_path is not None else None,
-            legacy_csv_path=self._relative_path(legacy_csv_path) if legacy_csv_path is not None else None,
+            release_csv_path=(
+                self._relative_path(release_csv_path)
+                if release_csv_path is not None
+                else None
+            ),
+            legacy_csv_path=(
+                self._relative_path(legacy_csv_path)
+                if legacy_csv_path is not None
+                else None
+            ),
         )
-        record = manifest.to_dict()
-        self.table_records.append(record)
-        self._tables_by_name[name] = record
-        return manifest
 
     def write_partition(
         self,
@@ -242,10 +301,17 @@ class OutputStore:
 
         records = self._partition_records.get(table.name, [])
         if not records:
-            raise ValueError(f"No partitions have been written for table {table.name!r}")
-        frames = [self._read_path(self.output_dir / record["path"], record["format"]) for record in records]
+            raise ValueError(
+                f"No partitions have been written for table {table.name!r}"
+            )
+        frames = [
+            self._read_path(self.output_dir / record["path"], record["format"])
+            for record in records
+        ]
         merged = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-        return self.write_table(table.name, filename or f"{table.name}.csv", merged, table)
+        return self.write_table(
+            table.name, filename or f"{table.name}.csv", merged, table
+        )
 
     def read_table(self, name: str) -> pd.DataFrame:
         """Read a table previously written by this store."""
@@ -302,7 +368,11 @@ class OutputStore:
         table: OutputTableSpec,
     ) -> tuple[Path, str]:
         if self._prefers_parquet(table):
-            parquet_path = self.output_dir / "tables_parquet" / filename.replace(".csv", ".parquet")
+            parquet_path = (
+                self.output_dir
+                / "tables_parquet"
+                / filename.replace(".csv", ".parquet")
+            )
             try:
                 parquet_path.parent.mkdir(parents=True, exist_ok=True)
                 frame.to_parquet(parquet_path, index=False)
@@ -324,7 +394,10 @@ class OutputStore:
         return csv_path, "csv"
 
     def _prefers_parquet(self, table: OutputTableSpec) -> bool:
-        return self.output_format in {"parquet", "both"} and table.internal_format == "parquet"
+        return (
+            self.output_format in {"parquet", "both"}
+            and table.internal_format == "parquet"
+        )
 
     def _read_path(self, path: Path, file_format: str) -> pd.DataFrame:
         if file_format == "parquet":
@@ -350,9 +423,14 @@ class OutputStore:
         )
 
 
-def _write_csv(path: Path, frame: pd.DataFrame, compression: str | None = None) -> None:
+def _write_csv(
+    path: Path, frame: pd.DataFrame, compression: CsvCompression | None = None
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(path, index=False, compression=compression)
+    if compression is None:
+        frame.to_csv(path, index=False)
+    else:
+        frame.to_csv(path, index=False, compression=compression)
 
 
 def _has_parquet_engine() -> bool:

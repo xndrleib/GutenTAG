@@ -3,6 +3,21 @@ from unittest import TestCase
 from gutenTAG.config.parser import ConfigParser
 from gutenTAG.utils.compatibility import Compatibility
 
+VALIDATED_COMPATIBILITY_CASES = (
+    ("extremum", "cosine", "validated", True),
+    ("extremum", "ecg", "recommended", True),
+    ("covariance-change", "polynomial", "validated", True),
+    ("correlation-flip", "polynomial", "validated", True),
+    ("covariance-change", "shared-noise-sine", "validated", True),
+    ("correlation-flip", "cosine", "recommended", True),
+    ("correlation-flip", "cosine", "validated", False),
+    ("correlation-flip", "shared-noise-sine", "validated", True),
+    ("shared-factor-break", "shared-noise-sine", "recommended", True),
+    ("shared-factor-break", "shared-noise-sine", "validated", False),
+    ("lag-synchronization", "sine", "validated", True),
+    ("covariance-change", "polynomial", "recommended", True),
+)
+
 
 class TestCompatibility(TestCase):
     def setUp(self) -> None:
@@ -76,87 +91,17 @@ class TestCompatibility(TestCase):
         )
 
     def test_validated_matrix_keeps_only_admitted_structural_pairs(self):
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="extremum",
-                base_oscillation="cosine",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="extremum",
-                base_oscillation="ecg",
-                mode="recommended",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="covariance-change",
-                base_oscillation="polynomial",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="correlation-flip",
-                base_oscillation="polynomial",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="covariance-change",
-                base_oscillation="shared-noise-sine",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="correlation-flip",
-                base_oscillation="cosine",
-                mode="recommended",
-            )
-        )
-        self.assertFalse(
-            Compatibility.check(
-                anomaly="correlation-flip",
-                base_oscillation="cosine",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="correlation-flip",
-                base_oscillation="shared-noise-sine",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="shared-factor-break",
-                base_oscillation="shared-noise-sine",
-                mode="recommended",
-            )
-        )
-        self.assertFalse(
-            Compatibility.check(
-                anomaly="shared-factor-break",
-                base_oscillation="shared-noise-sine",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="lag-synchronization",
-                base_oscillation="sine",
-                mode="validated",
-            )
-        )
-        self.assertTrue(
-            Compatibility.check(
-                anomaly="covariance-change",
-                base_oscillation="polynomial",
-                mode="recommended",
-            )
-        )
+        for anomaly, base_oscillation, mode, expected in VALIDATED_COMPATIBILITY_CASES:
+            with self.subTest(
+                anomaly=anomaly,
+                base_oscillation=base_oscillation,
+                mode=mode,
+            ):
+                self.assertEqual(
+                    Compatibility.check(
+                        anomaly=anomaly,
+                        base_oscillation=base_oscillation,
+                        mode=mode,
+                    ),
+                    expected,
+                )

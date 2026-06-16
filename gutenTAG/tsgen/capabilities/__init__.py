@@ -1,8 +1,18 @@
 """Theory-aligned capability analysis for generated TSAD datasets."""
 
 from .cache import CacheFingerprint, CacheStore
-from .output_store import OutputStore, OutputTableManifest, OutputTableSpec, ParquetOutputError
-from .partitions import PartitionResult, PartitionSpec, partition_sequence, run_partitions
+from .output_store import (
+    OutputStore,
+    OutputTableManifest,
+    OutputTableSpec,
+    ParquetOutputError,
+)
+from .partitions import (
+    PartitionResult,
+    PartitionSpec,
+    partition_sequence,
+    run_partitions,
+)
 from .protocol import (
     CapabilityProtocol,
     CapabilityRunConfig,
@@ -17,6 +27,7 @@ def run_capability_analysis(*args, **kwargs):
     from .runner import run_capability_analysis as _run_capability_analysis
 
     return _run_capability_analysis(*args, **kwargs)
+
 
 __all__ = [
     "CapabilityProtocol",

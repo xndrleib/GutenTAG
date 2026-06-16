@@ -5,7 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 
-def affine_channel_repair(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -> np.ndarray:
+def affine_channel_repair(
+    clean_segment: np.ndarray, anomalous_segment: np.ndarray
+) -> np.ndarray:
     """Fit a per-channel affine map from anomalous to clean values."""
 
     if clean_segment.size == 0 or anomalous_segment.size == 0:
@@ -26,7 +28,9 @@ def affine_channel_repair(clean_segment: np.ndarray, anomalous_segment: np.ndarr
     return repaired
 
 
-def match_pattern(clean_segment: np.ndarray, anomalous_segment: np.ndarray) -> np.ndarray:
+def match_pattern(
+    clean_segment: np.ndarray, anomalous_segment: np.ndarray
+) -> np.ndarray:
     """Align a local template anomaly using the best monotonic repair candidate."""
 
     if clean_segment.size == 0 or anomalous_segment.size == 0:

@@ -10,7 +10,11 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from .ontology import constraint_tag_for_anomaly, repair_operator_for_anomaly, semantic_scope_for_anomaly
+from .ontology import (
+    constraint_tag_for_anomaly,
+    repair_operator_for_anomaly,
+    semantic_scope_for_anomaly,
+)
 
 
 @dataclass(frozen=True)
@@ -94,7 +98,9 @@ def read_timeseries_csv(path: Path) -> np.ndarray:
     return values
 
 
-def discover_dataset(root: Path, *, prefer_metadata_registry: bool = True) -> DatasetIndex:
+def discover_dataset(
+    root: Path, *, prefer_metadata_registry: bool = True
+) -> DatasetIndex:
     """Discover generated instances under a synth-gen dataset root."""
 
     dataset_root = Path(root).resolve()
@@ -113,56 +119,16 @@ def discover_dataset(root: Path, *, prefer_metadata_registry: bool = True) -> Da
         id_field="genotype_id",
     )
     instances: list[InstanceRecord] = []
-    for anomalous_path in sorted(dataset_root.glob("variants/*/*/instances/*/anomalous.csv")):
-        instance_dir = anomalous_path.parent
-        clean_path = instance_dir / "clean.csv"
-        events_path = instance_dir / "events.json"
-        summary_path = instance_dir / "instance_summary.json"
-        if not clean_path.exists() or not summary_path.exists():
-            continue
-        summary = load_json(summary_path)
-        clean_shape = pd.read_csv(clean_path, nrows=1).shape
-        length = int(summary.get("length", summary.get("dataset_length", 0)) or 0)
-        if length <= 0:
-            length = int(sum(1 for _ in clean_path.open("r", encoding="utf-8")) - 1)
-        channels = int(summary.get("channels", clean_shape[1]) or clean_shape[1])
-        variant_id = str(summary.get("variant_id", anomalous_path.parents[3].name))
-        split = str(summary.get("split", anomalous_path.parents[2].name))
-        instance_id = str(summary.get("instance_id", instance_dir.name))
-        anomaly_type = str(summary.get("anomaly_type", _parse_anomaly_type(variant_id)))
-        base_oscillation = str(summary.get("base_oscillation", _parse_base_oscillation(variant_id)))
-        events = _events_for_instance(
+    for anomalous_path in sorted(
+        dataset_root.glob("variants/*/*/instances/*/anomalous.csv")
+    ):
+        instance = _discover_instance_record(
+            dataset_root,
+            anomalous_path,
             metadata_by_instance=metadata_by_instance,
-            variant_id=variant_id,
-            split=split,
-            instance_id=instance_id,
-            fallback_path=events_path,
         )
-        instances.append(
-            InstanceRecord(
-                dataset_root=dataset_root,
-                variant_id=variant_id,
-                split=split,
-                instance_id=instance_id,
-                instance_dir=instance_dir,
-                clean_path=clean_path,
-                anomalous_path=anomalous_path,
-                events_path=events_path,
-                summary_path=summary_path,
-                base_oscillation=base_oscillation,
-                anomaly_type=anomaly_type,
-                channels=channels,
-                length=length,
-                event_groups=tuple(
-                    group_events(
-                        events,
-                        anomaly_type=anomaly_type,
-                        channels=channels,
-                        length=length,
-                    )
-                ),
-            )
-        )
+        if instance is not None:
+            instances.append(instance)
     return DatasetIndex(
         root=dataset_root,
         manifest=manifest,
@@ -172,7 +138,70 @@ def discover_dataset(root: Path, *, prefer_metadata_registry: bool = True) -> Da
     )
 
 
-def instances_by_variant(instances: Sequence[InstanceRecord]) -> dict[str, list[InstanceRecord]]:
+def _discover_instance_record(
+    dataset_root: Path,
+    anomalous_path: Path,
+    *,
+    metadata_by_instance: Mapping[tuple[str, str, str], Sequence[Mapping[str, Any]]],
+) -> InstanceRecord | None:
+    instance_dir = anomalous_path.parent
+    clean_path = instance_dir / "clean.csv"
+    summary_path = instance_dir / "instance_summary.json"
+    if not clean_path.exists() or not summary_path.exists():
+        return None
+    summary = load_json(summary_path)
+    clean_shape = pd.read_csv(clean_path, nrows=1).shape
+    length = _instance_length(summary, clean_path)
+    channels = int(summary.get("channels", clean_shape[1]) or clean_shape[1])
+    variant_id = str(summary.get("variant_id", anomalous_path.parents[3].name))
+    split = str(summary.get("split", anomalous_path.parents[2].name))
+    instance_id = str(summary.get("instance_id", instance_dir.name))
+    anomaly_type = str(summary.get("anomaly_type", _parse_anomaly_type(variant_id)))
+    events_path = instance_dir / "events.json"
+    events = _events_for_instance(
+        metadata_by_instance=metadata_by_instance,
+        variant_id=variant_id,
+        split=split,
+        instance_id=instance_id,
+        fallback_path=events_path,
+    )
+    return InstanceRecord(
+        dataset_root=dataset_root,
+        variant_id=variant_id,
+        split=split,
+        instance_id=instance_id,
+        instance_dir=instance_dir,
+        clean_path=clean_path,
+        anomalous_path=anomalous_path,
+        events_path=events_path,
+        summary_path=summary_path,
+        base_oscillation=str(
+            summary.get("base_oscillation", _parse_base_oscillation(variant_id))
+        ),
+        anomaly_type=anomaly_type,
+        channels=channels,
+        length=length,
+        event_groups=tuple(
+            group_events(
+                events,
+                anomaly_type=anomaly_type,
+                channels=channels,
+                length=length,
+            )
+        ),
+    )
+
+
+def _instance_length(summary: Mapping[str, Any], clean_path: Path) -> int:
+    length = int(summary.get("length", summary.get("dataset_length", 0)) or 0)
+    if length > 0:
+        return length
+    return int(sum(1 for _ in clean_path.open("r", encoding="utf-8")) - 1)
+
+
+def instances_by_variant(
+    instances: Sequence[InstanceRecord],
+) -> dict[str, list[InstanceRecord]]:
     """Group instances by variant identifier."""
 
     grouped: dict[str, list[InstanceRecord]] = {}
@@ -194,15 +223,42 @@ def group_events(
     for index, event in enumerate(events):
         group_id = str(event.get("group_id", index))
         by_group.setdefault(group_id, []).append(event)
-    for group_id, rows in sorted(by_group.items(), key=lambda item: _group_sort_key(item[0])):
+    for group_id, rows in sorted(
+        by_group.items(), key=lambda item: _group_sort_key(item[0])
+    ):
         starts = [_clip_int(row.get("start", 0), 0, length) for row in rows]
-        ends = [_clip_int(row.get("end", row.get("start", 0)), 0, length) for row in rows]
-        source_starts = [_clip_int(row.get("source_start", row.get("start", 0)), 0, length) for row in rows]
-        source_ends = [_clip_int(row.get("source_end", row.get("end", row.get("start", 0))), 0, length) for row in rows]
+        ends = [
+            _clip_int(row.get("end", row.get("start", 0)), 0, length) for row in rows
+        ]
+        source_starts = [
+            _clip_int(row.get("source_start", row.get("start", 0)), 0, length)
+            for row in rows
+        ]
+        source_ends = [
+            _clip_int(
+                row.get("source_end", row.get("end", row.get("start", 0))), 0, length
+            )
+            for row in rows
+        ]
         group_anomaly_type = str(rows[0].get("anomaly_type", anomaly_type))
-        intervention = _collect_channels(rows, ("operator_target_channels", "intervention_channels", "perturbed_channels", "channel"), channels)
-        context = _collect_channels(rows, ("context_channels", "group_channels", "anchor_channel", "channel"), channels)
-        grouped_channels = _collect_channels(rows, ("group_channels", "context_channels", "channel"), channels)
+        intervention = _collect_channels(
+            rows,
+            (
+                "operator_target_channels",
+                "intervention_channels",
+                "perturbed_channels",
+                "channel",
+            ),
+            channels,
+        )
+        context = _collect_channels(
+            rows,
+            ("context_channels", "group_channels", "anchor_channel", "channel"),
+            channels,
+        )
+        grouped_channels = _collect_channels(
+            rows, ("group_channels", "context_channels", "channel"), channels
+        )
         primary = _collect_channels(rows, ("channel",), channels)
         if not grouped_channels:
             grouped_channels = context or intervention or tuple(range(channels))

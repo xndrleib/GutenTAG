@@ -42,7 +42,9 @@ class ArrayStore:
         if self.cache_dir is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def materialize(self, instances: list[InstanceRecord] | tuple[InstanceRecord, ...]) -> None:
+    def materialize(
+        self, instances: list[InstanceRecord] | tuple[InstanceRecord, ...]
+    ) -> None:
         """Convert all instance CSV files into cached ``.npy`` arrays."""
 
         for instance in instances:
@@ -55,7 +57,9 @@ class ArrayStore:
         key = self._key(instance, kind)
         if self.cache_dir is None:
             if key not in self._memory_cache:
-                self._memory_cache[key] = read_timeseries_csv(self._source_path(instance, kind))
+                self._memory_cache[key] = read_timeseries_csv(
+                    self._source_path(instance, kind)
+                )
             return self._memory_cache[key]
 
         array_path = self._array_path(key)
@@ -78,7 +82,9 @@ class ArrayStore:
         array_path = self._array_path(key)
         array_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(array_path, values)
-        write_json(self._metadata_path(key), self._metadata_payload(source_path, values))
+        write_json(
+            self._metadata_path(key), self._metadata_payload(source_path, values)
+        )
         mmap_mode = "r" if self.mmap else None
         return np.load(array_path, mmap_mode=mmap_mode)
 
@@ -94,12 +100,21 @@ class ArrayStore:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
-        return metadata.get("source") == self._source_signature(self._source_path(instance, kind))
+        return metadata.get("source") == self._source_signature(
+            self._source_path(instance, kind)
+        )
 
     def _array_path(self, key: ArrayKey) -> Path:
         if self.cache_dir is None:
             raise ValueError("ArrayStore has no cache directory")
-        return self.cache_dir / "arrays" / _safe_component(key.variant_id) / key.split / key.instance_id / f"{key.kind}.npy"
+        return (
+            self.cache_dir
+            / "arrays"
+            / _safe_component(key.variant_id)
+            / key.split
+            / key.instance_id
+            / f"{key.kind}.npy"
+        )
 
     def _metadata_path(self, key: ArrayKey) -> Path:
         return self._array_path(key).with_suffix(".json")

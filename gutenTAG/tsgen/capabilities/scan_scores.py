@@ -85,7 +85,9 @@ def _compute_block(
     window_counts: list[int] = []
     for instance in clean_instances:
         clean = _read_clean(instance, arrays, clean_cache)
-        scan_windows = _scan_windows(clean.shape[0], int(event_length), protocol, windows)
+        scan_windows = _scan_windows(
+            clean.shape[0], int(event_length), protocol, windows
+        )
         witness_values: dict[str, list[float]] = {
             str(witness): [] for witness in protocol.detection_witnesses
         }
@@ -100,7 +102,9 @@ def _compute_block(
             )
             for witness in witness_values:
                 value = scores.get(witness)
-                witness_values[witness].append(float(value) if value is not None else np.nan)
+                witness_values[witness].append(
+                    float(value) if value is not None else np.nan
+                )
         window_counts.append(len(scan_windows))
         for witness, values in witness_values.items():
             per_witness[witness].append(np.asarray(values, dtype=np.float64))
@@ -118,7 +122,11 @@ def _read_clean(
 ) -> np.ndarray:
     key = _instance_key(instance)
     if key not in clean_cache:
-        clean_cache[key] = arrays.get(instance, "clean") if arrays is not None else read_timeseries_csv(instance.clean_path)
+        clean_cache[key] = (
+            arrays.get(instance, "clean")
+            if arrays is not None
+            else read_timeseries_csv(instance.clean_path)
+        )
     return clean_cache[key]
 
 

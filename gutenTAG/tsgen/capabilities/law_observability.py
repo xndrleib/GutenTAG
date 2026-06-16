@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import hashlib
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -51,12 +51,14 @@ def compute_law_observability_profiles(
         partition_size=max(1, int(partition_size)),
         prefix="law_observability",
     )
-    fingerprint_extra = {
+    fingerprint_extra: dict[str, object] = {
         "bootstrap_samples": int(protocol.bootstrap_samples),
         "partition_size": int(partition_size),
     }
 
-    def worker(partition: PartitionSpec[tuple[str, str, str, str, str]]) -> pd.DataFrame:
+    def worker(
+        partition: PartitionSpec[tuple[str, str, str, str, str]],
+    ) -> pd.DataFrame:
         return _law_observability_for_keys(
             keys=partition.items,
             grouped=grouped,
@@ -74,7 +76,9 @@ def compute_law_observability_profiles(
         table_worker=worker if cache is not None else None,
     )
     frames = [result.value for result in results if not result.value.empty]
-    profile = _sort_profile(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame())
+    profile = _sort_profile(
+        pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    )
     return LawObservabilityResult(profile=profile, summary=_summary(profile))
 
 
@@ -106,9 +110,15 @@ def _law_observability_for_keys(
             )
             for group in instance.event_groups:
                 channels = _event_channels(group, instance.channels)
-                clean_features.append(_window_features(clean, group.start, group.end, channels))
-                anomalous_features.append(_window_features(anomalous, group.start, group.end, channels))
-        clean_matrix, anomalous_matrix = _align_features(clean_features, anomalous_features)
+                clean_features.append(
+                    _window_features(clean, group.start, group.end, channels)
+                )
+                anomalous_features.append(
+                    _window_features(anomalous, group.start, group.end, channels)
+                )
+        clean_matrix, anomalous_matrix = _align_features(
+            clean_features, anomalous_features
+        )
         rows.append(
             _profile_row(
                 variant_id=variant_id,
@@ -132,8 +142,16 @@ def _group_instances(
     for instance in instances:
         if not instance.event_groups:
             continue
-        constraint_tag = instance.event_groups[0].constraint_tag if instance.event_groups else "unknown"
-        semantic_scope = instance.event_groups[0].semantic_scope if instance.event_groups else "unknown"
+        constraint_tag = (
+            instance.event_groups[0].constraint_tag
+            if instance.event_groups
+            else "unknown"
+        )
+        semantic_scope = (
+            instance.event_groups[0].semantic_scope
+            if instance.event_groups
+            else "unknown"
+        )
         key = (
             instance.variant_id,
             instance.split,
@@ -183,8 +201,12 @@ def _profile_row(
         "energy_distance_ci_high": finite_float(ci_high, default=math.nan),
         "mmd_rbf": finite_float(mmd, default=math.nan),
         "c2st_balanced_accuracy": finite_float(c2st, default=math.nan),
-        "gaussian_symmetric_kl": finite_float(gaussian["symmetric_kl"], default=math.nan),
-        "gaussian_hellinger_proxy": finite_float(gaussian["hellinger_proxy"], default=math.nan),
+        "gaussian_symmetric_kl": finite_float(
+            gaussian["symmetric_kl"], default=math.nan
+        ),
+        "gaussian_hellinger_proxy": finite_float(
+            gaussian["hellinger_proxy"], default=math.nan
+        ),
         "law_observability_status": status,
     }
 
@@ -206,7 +228,7 @@ def _window_features(
     diffs = np.diff(matrix, axis=0) if matrix.shape[0] >= 2 else np.zeros_like(matrix)
     corr_proxy = 0.0
     if matrix.shape[1] >= 2 and matrix.shape[0] >= 3:
-        corr = np.corrcoef(matrix, rowvar=False)
+        corr = np.asarray(np.corrcoef(matrix, rowvar=False), dtype=np.float64)
         mask = ~np.eye(corr.shape[0], dtype=bool)
         corr_proxy = float(np.nanmean(np.abs(corr[mask])))
         if not math.isfinite(corr_proxy):
@@ -234,13 +256,18 @@ def _align_features(
 ) -> tuple[np.ndarray, np.ndarray]:
     if not clean_features or not anomalous_features:
         return np.empty((0, 0), dtype=np.float64), np.empty((0, 0), dtype=np.float64)
-    width = max(max(item.size for item in clean_features), max(item.size for item in anomalous_features))
+    width = max(
+        max(item.size for item in clean_features),
+        max(item.size for item in anomalous_features),
+    )
     clean = np.vstack([_pad(item, width) for item in clean_features])
     anomalous = np.vstack([_pad(item, width) for item in anomalous_features])
     return _standardize_pair(clean, anomalous)
 
 
-def _standardize_pair(clean: np.ndarray, anomalous: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _standardize_pair(
+    clean: np.ndarray, anomalous: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     combined = np.vstack([clean, anomalous])
     center = np.mean(combined, axis=0)
     scale = np.std(combined, axis=0)
@@ -255,7 +282,11 @@ def _pad(values: np.ndarray, width: int) -> np.ndarray:
 
 
 def _event_channels(group: EventGroup, channels: int) -> tuple[int, ...]:
-    selected = sorted(set(group.group_channels) | set(group.context_channels) | set(group.intervention_channels))
+    selected = sorted(
+        set(group.group_channels)
+        | set(group.context_channels)
+        | set(group.intervention_channels)
+    )
     return tuple(channel for channel in selected if 0 <= int(channel) < int(channels))
 
 
@@ -300,25 +331,33 @@ def _rbf_kernel(left: np.ndarray, right: np.ndarray, gamma: float) -> np.ndarray
     return np.exp(-float(gamma) * sqdist)
 
 
-def _nearest_centroid_balanced_accuracy(clean: np.ndarray, anomalous: np.ndarray) -> float:
+def _nearest_centroid_balanced_accuracy(
+    clean: np.ndarray, anomalous: np.ndarray
+) -> float:
     if clean.shape[0] < 2 or anomalous.shape[0] < 2:
         return math.nan
     clean_correct = 0
     for index in range(clean.shape[0]):
         clean_centroid = np.mean(np.delete(clean, index, axis=0), axis=0)
         anomalous_centroid = np.mean(anomalous, axis=0)
-        clean_correct += int(_nearest_label(clean[index], clean_centroid, anomalous_centroid) == 0)
+        clean_correct += int(
+            _nearest_label(clean[index], clean_centroid, anomalous_centroid) == 0
+        )
     anomalous_correct = 0
     for index in range(anomalous.shape[0]):
         clean_centroid = np.mean(clean, axis=0)
         anomalous_centroid = np.mean(np.delete(anomalous, index, axis=0), axis=0)
-        anomalous_correct += int(_nearest_label(anomalous[index], clean_centroid, anomalous_centroid) == 1)
+        anomalous_correct += int(
+            _nearest_label(anomalous[index], clean_centroid, anomalous_centroid) == 1
+        )
     sensitivity = anomalous_correct / max(float(anomalous.shape[0]), 1.0)
     specificity = clean_correct / max(float(clean.shape[0]), 1.0)
     return float(0.5 * (sensitivity + specificity))
 
 
-def _nearest_label(value: np.ndarray, clean_centroid: np.ndarray, anomalous_centroid: np.ndarray) -> int:
+def _nearest_label(
+    value: np.ndarray, clean_centroid: np.ndarray, anomalous_centroid: np.ndarray
+) -> int:
     clean_distance = float(np.linalg.norm(value - clean_centroid))
     anomalous_distance = float(np.linalg.norm(value - anomalous_centroid))
     return 0 if clean_distance <= anomalous_distance else 1
@@ -345,7 +384,9 @@ def _regularized_cov(values: np.ndarray) -> np.ndarray:
     return cov + np.eye(cov.shape[0]) * 1e-6
 
 
-def _gaussian_kl(mean_p: np.ndarray, cov_p: np.ndarray, mean_q: np.ndarray, cov_q: np.ndarray) -> float:
+def _gaussian_kl(
+    mean_p: np.ndarray, cov_p: np.ndarray, mean_q: np.ndarray, cov_q: np.ndarray
+) -> float:
     dim = int(mean_p.size)
     inv_q = np.linalg.pinv(cov_q)
     diff = mean_q - mean_p
@@ -380,7 +421,9 @@ def _bootstrap_ci(
     return float(np.quantile(values, 0.025)), float(np.quantile(values, 0.975))
 
 
-def _law_status(energy: float, c2st: float, clean_count: int, anomalous_count: int) -> str:
+def _law_status(
+    energy: float, c2st: float, clean_count: int, anomalous_count: int
+) -> str:
     if clean_count < 2 or anomalous_count < 2:
         return "insufficient_replicates"
     if math.isfinite(c2st) and c2st >= 0.80:
@@ -394,9 +437,13 @@ def _summary(profile: pd.DataFrame) -> pd.DataFrame:
     if profile.empty:
         return pd.DataFrame()
     rows: list[dict[str, object]] = []
-    grouped = profile.groupby(["variant_id", "anomaly_type", "constraint_tag", "semantic_scope"], dropna=False)
+    grouped = profile.groupby(
+        ["variant_id", "anomaly_type", "constraint_tag", "semantic_scope"], dropna=False
+    )
     for key, frame in grouped:
-        variant_id, anomaly_type, constraint_tag, semantic_scope = key
+        variant_id, anomaly_type, constraint_tag, semantic_scope = cast(
+            tuple[object, object, object, object], key
+        )
         rows.append(
             {
                 "variant_id": variant_id,
@@ -406,12 +453,16 @@ def _summary(profile: pd.DataFrame) -> pd.DataFrame:
                 "split_count": int(frame["split"].nunique()),
                 "median_energy_distance": float(frame["energy_distance"].median()),
                 "median_mmd_rbf": float(frame["mmd_rbf"].median()),
-                "median_c2st_balanced_accuracy": float(frame["c2st_balanced_accuracy"].median()),
-                "median_gaussian_symmetric_kl": float(frame["gaussian_symmetric_kl"].median()),
+                "median_c2st_balanced_accuracy": float(
+                    frame["c2st_balanced_accuracy"].median()
+                ),
+                "median_gaussian_symmetric_kl": float(
+                    frame["gaussian_symmetric_kl"].median()
+                ),
                 "observable_split_share": float(
-                    frame["law_observability_status"].isin(
-                        {"law_observable", "weakly_law_observable"}
-                    ).mean()
+                    frame["law_observability_status"]
+                    .isin(["law_observable", "weakly_law_observable"])
+                    .mean()
                 ),
             }
         )
@@ -432,7 +483,13 @@ def _sort_profile(frame: pd.DataFrame) -> pd.DataFrame:
         return frame.reset_index(drop=True)
     columns = [
         column
-        for column in ("variant_id", "split", "anomaly_type", "constraint_tag", "semantic_scope")
+        for column in (
+            "variant_id",
+            "split",
+            "anomaly_type",
+            "constraint_tag",
+            "semantic_scope",
+        )
         if column in frame.columns
     ]
     if not columns:

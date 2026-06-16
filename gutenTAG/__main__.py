@@ -54,8 +54,7 @@ def parse_args(args: List[str]) -> argparse.Namespace:
 
 
 def main(sys_args: List[str]) -> None:
-    print(
-        f"""
+    print(f"""
 
                       Welcome to
 
@@ -71,8 +70,7 @@ def main(sys_args: List[str]) -> None:
 "Good day!" wishes your friendly Timeseries Anomaly Generator.
 
 
-"""
-    )
+""")
 
     if "--version" in sys_args:
         return

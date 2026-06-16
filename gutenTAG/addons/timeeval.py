@@ -20,7 +20,6 @@ from gutenTAG.utils.global_variables import (
     BASE_OSCILLATION_NAMES,
 )
 
-
 columns = [
     "collection_name",
     "dataset_name",
@@ -62,7 +61,7 @@ class LearningType(Enum):
 
 class TimeEvalAddOn(BaseAddOn):
     def __init__(self):
-        self.df = pd.DataFrame(columns=columns)
+        self.df = pd.DataFrame(columns=pd.Index(columns))
         self.key = self.__class__.__name__
 
     def process(self, ctx: AddOnProcessContext) -> AddOnProcessContext:
@@ -84,7 +83,7 @@ class TimeEvalAddOn(BaseAddOn):
         metadata = []
         for ts_obj in ctx.get_data(self.key):
             metadata += ts_obj["datasets"]
-        df = pd.DataFrame(metadata, columns=columns)
+        df = pd.DataFrame(metadata, columns=pd.Index(columns))
         self._set_global_vals(df)
         self.df = df
         if ctx.should_save and ctx.output_folder is not None:

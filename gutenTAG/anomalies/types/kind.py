@@ -74,8 +74,8 @@ class AnomalyKind(Enum):
             )
 
     @staticmethod
-    def _instantiate_anomaly(cls, parameters: Dict[str, Any]) -> BaseAnomaly:
-        return cls(cls.get_parameter_class()(**parameters))
+    def _instantiate_anomaly(anomaly_cls, parameters: Dict[str, Any]) -> BaseAnomaly:
+        return anomaly_cls(anomaly_cls.get_parameter_class()(**parameters))
 
     @classmethod
     def has_value(cls, v: str) -> bool:
