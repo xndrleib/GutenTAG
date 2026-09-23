@@ -47,6 +47,7 @@ class VariantsSection(_StrictModel):
     base_channel_correlation: Optional[Dict[str, Any]] = None
     split_phase_shift: Optional[Dict[str, Any]] = None
     anomaly_parameter_policy: Optional[str] = None
+    split_parameter_policy: Optional[str] = None
     base_oscillation_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     anomaly_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     variant_overrides: Optional[Dict[str, Dict[str, Any]]] = None
@@ -141,6 +142,7 @@ class TSRawConfig(_StrictModel):
     base_channel_correlation: Optional[Dict[str, Any]] = None
     split_phase_shift: Optional[Dict[str, Any]] = None
     anomaly_parameter_policy: Optional[str] = None
+    split_parameter_policy: Optional[str] = None
     base_oscillation_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     anomaly_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     variant_overrides: Optional[Dict[str, Dict[str, Any]]] = None
