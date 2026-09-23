@@ -1,0 +1,31 @@
+name: Apply reviewed v13 audit patch
+on:
+  push:
+    branches: [fix/v13-audit-complete]
+    paths: [tools/apply_v13_legacy.py, .github/workflows/apply-v13-audit.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'xndrleib/GutenTAG' && github.ref == 'refs/heads/fix/v13-audit-complete'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply exact precondition-checked patch
+        run: python tools/apply_v13_legacy.py
+      - name: Compile affected source
+        run: python -m compileall -q gutenTAG tests
+      - name: Save remediation to the fixed PR branch only
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add gutenTAG tests
+          git commit -m 'fix(v13): apply validated legacy semantics, grouped statistics and streaming output'
+          git push origin HEAD:fix/v13-audit-complete
