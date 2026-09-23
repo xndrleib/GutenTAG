@@ -142,6 +142,10 @@ def _validate_variant_selection(config: TSGeneratorConfig) -> None:
 
 
 def _validate_parameter_policies(config: TSGeneratorConfig) -> None:
+    if config.split_parameter_policy not in ("matched", "independent"):
+        raise ValueError(
+            "split_parameter_policy must be one of {'matched','independent'}"
+        )
     if config.base_parameter_policy not in (
         "fixed_per_variant",
         "random_per_instance",
