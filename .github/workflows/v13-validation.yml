@@ -27,6 +27,9 @@ jobs:
           git archive HEAD -o evidence/source.zip
       - name: Install runtime and testing dependencies
         run: python -m pip install '.[dev]'
+      - name: Preserve backend and checking wheels
+        run: |
+          python -m pip download --only-binary=:all: --no-deps --dest evidence/wheels neurokit2==0.2.13 pywavelets==1.9.0 black==26.5.1 flake8==7.4.0 pycodestyle==2.15.0 pyflakes==4.0.0 mccabe==0.7.0 pytokens==0.4.1 mypy==2.3.1 librt==0.15.0 ast-serialize==0.11.2
       - name: Run standalone library suite
         run: |
           python -m pytest tests --ignore=tests/test_dataset_quality_qc_v2.py --ignore=tests/test_split_diversity_check.py --junitxml=evidence/tests.xml
