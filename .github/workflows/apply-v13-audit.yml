@@ -20,6 +20,15 @@ jobs:
           python-version: '3.11'
       - name: Apply exact precondition-checked patch
         run: python tools/apply_v13_legacy.py
+      - name: Format changed Python only
+        run: |
+          python -m pip install black==26.5.1
+          python - <<'PY'
+          import subprocess
+          files = subprocess.check_output(['git','diff','--name-only','97e48a7ad1b8b0431a4998c2ab2036a2e8b5e62f'], text=True).splitlines()
+          files = [p for p in files if p.endswith('.py') and not p.startswith('tools/')]
+          subprocess.run(['python','-m','black',*files], check=True)
+          PY
       - name: Compile affected source
         run: python -m compileall -q gutenTAG tests
       - name: Save remediation to the fixed PR branch only
@@ -27,5 +36,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add gutenTAG tests
-          git commit -m 'fix(v13): apply validated legacy semantics, grouped statistics and streaming output'
+          git commit -m 'fix(v13): complete scan calibration, parser semantics and regression coverage'
           git push origin HEAD:fix/v13-audit-complete

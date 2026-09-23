@@ -1,252 +1,178 @@
-"""One-shot, assertion-guarded application of the reviewed legacy audit patch.
-
-This transport helper is removed after the resulting source commit is saved.
-It is run only by the fixed same-repository remediation branch workflow.
-"""
+"""Final assertion-guarded audit changes; removed after the source commit."""
 from pathlib import Path
 r = Path(__file__).resolve().parents[1]
 
 
 def patch(path, old, new):
     f = r/path
-    text = f.read_text()
-    if old not in text:
+    s = f.read_text()
+    if old not in s:
         raise ValueError(f"Patch precondition failed: {path}: {old[:80]}")
-    f.write_text(text.replace(old, new))
+    f.write_text(s.replace(old, new))
 
 
-patch('gutenTAG/tsgen/parameters/sampling.py',
-'''        str(key): _realize_parameter_value(value, rng)
-        for key, value in dict(template).items()''',
-'''        str(key): (copy.deepcopy(value) if str(key) in {"polynomial", "coefficients"}
-                   and isinstance(value, (list, tuple)) else _realize_parameter_value(value, rng))
-        for key, value in dict(template).items()''')
-patch('gutenTAG/tsgen/parameters/sampling.py', '''        mapping = dict(value)
-        if "distribution" in mapping:''', '''        mapping = dict(value)
-        if set(mapping) == {"literal"}:
-            return copy.deepcopy(mapping["literal"])
-        if "distribution" in mapping:''')
-patch('gutenTAG/tsgen/parameters/sampling.py', '''        return {
-            str(key): _realize_parameter_value(nested, rng)
-            for key, nested in mapping.items()
-        }''', '''        return realize_parameters(mapping, rng)''')
-patch('gutenTAG/tsgen/parameters/sampling.py', '''    sign = -1.0 if rng.random() < 0.5 else 1.0
-    return float(sign * threshold)''', '''    raise ValueError("Rejection sampler exhausted: requested effect is outside the prior support")''')
-patch('gutenTAG/tsgen/capabilities/corrected_detectability_partitions.py',
-'''        if preferred:
-            return preferred
-    return tuple(instances)''',
-'''        if not preferred:
-            raise ValueError(f"Required calibration split {protocol.calibration_split!r} is absent")
-        return preferred
-    # None is the explicit legacy/oracle diagnostic mode, not a deployment protocol.
-    return tuple(instances)''')
-patch('gutenTAG/tsgen/paired_instance_generation.py', 'import logging\n', 'import logging\nimport copy\n')
-patch('gutenTAG/tsgen/paired_instance_generation.py', '''    return generate_base_instance_series(
-        base_kind=variant.base_oscillation,
-        base_parameters_per_channel=base_instance.base_parameters_per_channel,
-        seed=int(seeds["base_seed"]),
-        shared_noise_seed=int(seeds["base_shared_noise_seed"]),
-        base_channel_correlation=effective_base_channel_correlation,
-        expected_length=config.length,
-    )''', '''    # Clone mutable arrays once, instead of repeating GP generation. Immutable
-    # process laws implement __deepcopy__ by returning themselves.
-    return copy.deepcopy(base_instance.series)''')
-patch('gutenTAG/tsgen/paired_instance_generation.py', '    generate_base_instance_series,\n', '')
-patch('gutenTAG/tsgen/labels/effective_support.py', '''    if active.size == 0:
-        return int(protocol_start), int(protocol_end)''', '''    if active.size == 0:
-        return int(protocol_start), int(protocol_start)''')
-patch('gutenTAG/tsgen/labels/effective_support.py', '''    if expected_length <= 0:
-        return np.array([], dtype=np.float64)''', '''    if policy not in {"none", "crop", "pad", "resample"}:
-        raise ValueError(f"Unknown length normalization policy: {policy}")
-    if expected_length <= 0:
-        return np.array([], dtype=np.float64)''')
-patch('gutenTAG/generator/group_relation_policy.py', '''    if kind == "shared-noise-sine":
-        return float(
-            np.sign(target_correlation) * max(abs(float(target_correlation)), 0.92)
-        )''', '''    if not np.isfinite(target_correlation) or abs(target_correlation) > 1:
-        raise ValueError("target_correlation must be finite and in [-1, 1]")''')
-patch('gutenTAG/generator/group_relation_policy.py', '''    if kind == "shared-noise-sine":
-        return float(
-            np.sign(coupling_strength) * max(abs(float(coupling_strength)), 0.95)
-        )''', '''    if not np.isfinite(coupling_strength) or abs(coupling_strength) > 1:
-        raise ValueError("coupling_strength must be finite and in [-1, 1]")''')
-patch('gutenTAG/tsgen/capabilities/corrected_detectability_blind_scan.py',
-'''"""Blind-scan scoring and row construction for corrected detectability."""''',
-'''"""Time-blind, channel-oracle and duration-oracle diagnostic scans.
+patch('gutenTAG/config/parser.py', '''            parameters = {
+                PARAMETERS.TREND: decode_trend_obj(
+                    deepcopy(d[PARAMETERS.OSCILLATION]), length
+                )
+            }''', '''            parameters = deepcopy(d)
+            del parameters[PARAMETERS.KIND]
+            parameters[PARAMETERS.TREND] = decode_trend_obj(
+                parameters.pop(PARAMETERS.OSCILLATION), length
+            )''')
+p = 'gutenTAG/config/schema/anomaly-kind.guten-tag-generation-config.schema.yaml'
+patch(p, 'enum: [inside_window_zero_endpoints, legacy_carry_over]', 'enum: [inside_window_preserve_shape, inside_window_zero_endpoints, legacy_carry_over]')
+f = r/p; s = f.read_text(); a = s.index('  variance-params:')
+s = s[:a]+s[a:].replace('      variance:\n', '      noise_std_ratio:\n        type: number\n        minimum: 0\n        description: Standard-deviation ratio; one is the identity with shared innovations.\n      variance:\n', 1)
+f.write_text(s)
+p = 'gutenTAG/tsgen/processes/laws.py'
+patch(p, 'np.allclose(x, x.T, atol=1e-12)', 'np.allclose(x, x.T, atol=1e-12, rtol=0)')
+patch(p, 'np.allclose(np.diag(x), 1.0, atol=1e-12)', 'np.allclose(np.diag(x), 1.0, atol=1e-12, rtol=0)')
+p = 'gutenTAG/tsgen/processes/interventions.py'
+patch(p, '    occupied = np.zeros(n, dtype=bool)', '''    # Mixed sensor/process events require causal composition. Never silently
+    # add an AR recovery tail after a sensor transformation of the same samples.
+    if len(events) > 1 and any(e.kind in RELATION_ONLY + ("noise-scale",) and e.strength != 0 for e in events):
+        raise ValueError("Multi-event innovation interventions require an explicit causal composition contract")
+    occupied = np.zeros(n, dtype=bool)''')
+patch(p, '                shape[event.start:event.end] = local', '                shape[event.start:event.end] = local * g[event.start:event.end]')
+patch(p, '''        if active:
+            mask[event.start:event.end, selected] = True''', '''        if active and event.kind == "noise-scale" and law.family == "diagonal-ar":
+            memory = float(np.max(np.abs(law.coefficients[selected])))
+            recovery = 0 if memory == 0 else int(np.ceil(np.log(1e-8)/np.log(memory)))
+            evaluation[event.end:min(n, event.end+recovery)] = False
+            extra["recovery_exclusion"] = [event.end, min(n, event.end+recovery)]
+        if active:
+            mask[event.start:event.end, selected] = True''')
+p = 'gutenTAG/tsgen/benchmark/generation.py'
+patch(p, 'from ..seeding import derive_seed\n', '')
+patch(p, 'LOGGER = logging.getLogger(__name__)', '''LOGGER = logging.getLogger(__name__)
 
-These legacy diagnostics receive event metadata. They are NOT fully blind
-benchmark measurements; use tsgen.capabilities.v13_evaluation for that task.
-"""''')
-p = 'gutenTAG/anomalies/types/variance.py'
-patch(p, '    variance: float = 0.0\n', '    variance: float = 0.0\n    noise_std_ratio: Optional[float] = None\n')
-patch(p, '        self.variance = parameters.variance\n', '        self.variance = parameters.variance\n        self.noise_std_ratio = parameters.noise_std_ratio\n')
-patch(p, '        target_std = max(0.0, float(self.variance) * reference_scale)', '''        if self.noise_std_ratio is not None:
-            ratio = float(self.noise_std_ratio)
-            if not np.isfinite(ratio) or ratio < 0:
-                raise ValueError("noise_std_ratio must be finite and nonnegative")
-            envelope = self.build_symmetric_envelope(length, self.transition_length)
-            # Reuse innovations: ratio=1 is a true null, not resampled noise.
-            base.noise[anomaly_protocol.start:anomaly_protocol.end] = (
-                original_noise * (1.0 + envelope * (ratio - 1.0))
-            )
-            return
-        target_std = max(0.0, float(self.variance) * reference_scale)''')
-patch(p, '''        if base_kind in {"polynomial", "random-walk"}:
-            return original_noise + envelope * subsequence_noise
-        return original_noise + envelope * (subsequence_noise - original_noise)''', '''        return original_noise + envelope * (subsequence_noise - original_noise)''')
-patch(p, '''        if base_kind in {"polynomial", "random-walk"}:
-            effective_min_effect = max(effective_min_effect, 0.75 * reference_scale)
+
+def derive_seed(seed: int, *parts: str) -> int:
+    """128-bit, unambiguously namespaced v13 seeds; legacy seeds are unchanged."""
+    payload = json.dumps([int(seed), *parts], separators=(",", ":")).encode()
+    return int.from_bytes(hashlib.sha256(payload).digest()[:16], "big")''')
+p = 'gutenTAG/tsgen/capabilities/v13_evaluation.py'
+patch(p, '    scores: np.ndarray\n', '    scores: np.ndarray\n    components: np.ndarray\n')
+patch(p, '''    scores = np.maximum(np.max(np.abs(mean), axis=1), np.max(np.abs(np.log(var)), axis=1))
+    scores = np.maximum(scores, 10*_window_mean(missing.astype(float), start, end).max(axis=1))''', '''    component = np.zeros((len(start), 5))
+    component[:, 0] = np.max(np.abs(mean), axis=1)
+    component[:, 1] = np.max(np.abs(np.log(var)), axis=1)
+    component[:, 3] = _window_mean(missing.astype(float), start, end).max(axis=1)''')
+patch(p, '        scores = np.maximum(scores, np.max(np.abs(qm-rm), axis=1))', '        component[:, 2] = np.maximum(component[:, 2], np.max(np.abs(qm-rm), axis=1))')
+patch(p, '''        scores = np.maximum(scores, _window_mean(jitter, start, end).max(axis=1))
+    return ScanResult(start, end, scores)''', '''        component[:, 4] = _window_mean(jitter, start, end).max(axis=1)
+    # Raw maxima are diagnostics ONLY. Decisions use calibrated families.
+    return ScanResult(start, end, component.max(axis=1), component)''')
+patch(p, 'null.append(blind_scan(reference, f["values"], windows=config.window_lengths, stride=config.stride).maximum)', 'null.append(blind_scan(reference, f["values"], windows=config.window_lengths, stride=config.stride).components.max(axis=0))')
+patch(p, '            predictions.append((query, scan, empirical_p(np.asarray(null), scan.scores)))', '''            family_p = np.column_stack([empirical_p(np.asarray(null)[:, k], scan.components[:, k])
+                                        for k in range(scan.components.shape[1])])
+            # Every family is scan-corrected; correct selection across families.
+            pvalues = np.minimum(1.0, family_p.shape[1]*family_p.min(axis=1))
+            predictions.append((query, scan, pvalues))''')
+patch(p, '"scan_p": float(empirical_p(np.asarray(null), np.array([scan.maximum]))[0]),', '''"scan_p": float(pvalues.min()),
+                             "aggregation": "calibrated_family_scan_maxima_bonferroni",
+                             "witness_family_count": scan.components.shape[1],''')
+patch(p, '"calibration_resolution_ok": 1/(len(null)+1) <= alpha,', '"calibration_resolution_ok": scan.components.shape[1]/(len(null)+1) <= alpha,')
+patch(p, '                outside = ~endpoint_in_event if not event["is_null"] else np.ones(len(alerts), bool)', '                outside = ((scan.ends <= lo) | (scan.starts >= hi)) if not event["is_null"] else np.ones(len(alerts), bool)')
+patch(p, '                false_alerts = alerts & outside & evaluable[scan.ends-1]', '''                # Entire windows, not just endpoints, must be normal and outside recovery.
+                excluded = np.r_[0, np.cumsum(~evaluable)]
+                false_alerts = alerts & outside & ((excluded[scan.ends]-excluded[scan.starts]) == 0)''')
+patch(p, '''The maximum over ALL configured windows/channels/pairs is calibrated on whole,
+independent normal trajectories from the same target system.''', '''Each witness family's maximum over ALL configured windows/channels/pairs is
+calibrated on whole independent normal trajectories from the same system.
+Bonferroni corrects selection across witness families; raw units are not mixed.''')
+p = 'gutenTAG/generator/group_relation_policy.py'
+patch(p, '''    if kind == "shared-noise-sine":
+        return int(max(1, min(int(transition_length), 6)))
 ''', '')
-p = 'gutenTAG/anomalies/types/trend.py'
-patch(p, '    boundary_mode: str = "inside_window_zero_endpoints"', '    boundary_mode: str = "inside_window_preserve_shape"')
-patch(p, '        local = self._anchor_zero_endpoints(local)', '''        if self.boundary_mode == "inside_window_zero_endpoints":
-            local = self._anchor_zero_endpoints(local)
-        elif self.boundary_mode == "inside_window_preserve_shape":
-            local -= local[0] if local.size else 0.0
-        else:
-            raise ValueError(f"Unknown trend boundary_mode: {self.boundary_mode}")''')
-patch(p, '        if self.envelope_kind in ("sine2", "sin2") and local.shape[0] > 1:', '        if self.boundary_mode == "inside_window_zero_endpoints" and self.envelope_kind in ("sine2", "sin2") and local.shape[0] > 1:')
-p = 'gutenTAG/tsgen/sidecars.py'
-f = r/p; s = f.read_text()
-a = s.index('    frames_by_channel:'); b = s.index('    manifest = annotation_channel_manifest()', a)
-s = s[:a]+'''    table_paths: dict[str, str] = {}
-    table_hashes: dict[str, str] = {}
-    row_counts = {name: 0 for name in selected_channels}
-    temp_paths = {name: labels_dir / f".{name}.csv.tmp" for name in selected_channels}
-    for path in temp_paths.values():
-        path.write_text("", encoding="utf-8")
-    for instance in dataset.instances:
-        events = load_json(instance.events_path)
-        channels = build_annotation_channels(
-            length=instance.length, channels=instance.channels, events=events,
-        )
-        for name in selected_channels:
-            channel = channels[name]
-            frame = _flatten_label_table(instance, channel.values, channel.columns)
-            frame.to_csv(temp_paths[name], mode="a", index=False,
-                         header=row_counts[name] == 0)
-            row_counts[name] += len(frame)
-    for name, temp in temp_paths.items():
-        path = labels_dir / f"{name}.csv"
-        temp.replace(path)
-        table_paths[name] = _relative_path(path, dataset.root)
-        table_hashes[name] = _file_hash(path)
+patch(p, '''    kind = str(bo.get_base_oscillation_kind())
+    return int(max(0, transition_length))''', '''    return int(max(0, transition_length))''')
+patch(p, '    kind = str(bo.get_base_oscillation_kind())\n    if not np.isfinite', '    if not np.isfinite')
+patch('gutenTAG/generator/group_covariance_change.py', 'max(0, min(state.transition_length, 8))', 'max(0, state.transition_length)')
+patch('tests/test_group_relation_policy.py', 'effective_latent_transition_length(bo, 20), 6', 'effective_latent_transition_length(bo, 20), 20')
+patch('tests/test_group_relation_policy.py', 'effective_latent_transition_length(bo, 0), 1', 'effective_latent_transition_length(bo, 0), 0')
+patch('gutenTAG/tsgen/capabilities/dataset.py', '''        manifest = load_json(manifest_path)
+    metadata_events = (''', '''        manifest = load_json(manifest_path)
+        if manifest.get("schema_version") == "synthgen.v13.1":
+            raise ValueError("v13.1 law datasets require evaluate_benchmark; legacy capability discovery would lose observation masks and oracle boundaries")
+    metadata_events = (''')
+patch('tests/test_v13_audit_regressions.py', 'calibration_realizations=9,', 'calibration_realizations=49,')
+f = r/'tests/test_v13_audit_regressions.py'
+f.write_text(f.read_text()+'''
 
-'''+s[b:]
-f.write_text(s)
-patch(p, '''    write_json(manifest_path, manifest, sort_keys=True, indent=2)
-    manifest["manifest_path"] = _relative_path(manifest_path, dataset.root)
-    manifest["manifest_hash"] = _file_hash(manifest_path)
-    write_json(manifest_path, manifest, sort_keys=True, indent=2)''', '''    manifest["manifest_path"] = _relative_path(manifest_path, dataset.root)
-    write_json(manifest_path, manifest, sort_keys=True, indent=2)
-    # Only the parent stores the final-byte hash: no self-referential hash.
-    manifest["manifest_hash"] = _file_hash(manifest_path)''')
-patch(p, '"generated_paired_event_window"', '"event_window_registry_not_independent_realizations"')
-for path, name, attr in [('group_covariance_change.py', '_apply_covariance_rewrite', 'effective_strength'), ('group_correlation_flip.py', '_apply_correlation_rewrite', 'effective_target_correlation')]:
-    f = r/'gutenTAG/generator'/path
-    s = f.read_text().replace('from .group_context import', 'from .latent_laws import recouple_lmc_target\nfrom .group_context import')
-    i = s.index('    latent = latent_shared_noise_attrs(', s.index('def '+name))
-    text = f'''    lmc = recouple_lmc_target(
-        bo=channel_bos[state.channel], anchor=context.anchor_channel,
-        start=context.source_start, end=context.source_end,
-        target_correlation=state.{attr}, transition=state.transition_length,
-    )
-    if lmc is not None:
-        runtime.replace_noise(bo=channel_bos[state.channel], start=context.source_start,
-                              end=context.source_end, target_noise=lmc)
-        return "noise"
-'''
-    f.write_text(s[:i]+text+s[i:])
-patch('gutenTAG/generator/group_anomalies.py', '    handler = _GROUP_ANOMALY_HANDLERS.get(anomaly_type)', '''    if any(hasattr(bo, "_process_state") for bo in channel_bos) and anomaly_type not in {"covariance-change", "correlation-flip"}:
-        raise ValueError("Unsupported white-noise LMC operator; use the explicit v13 process-law API, not an observed-window fallback")
-    handler = _GROUP_ANOMALY_HANDLERS.get(anomaly_type)''')
-p = 'gutenTAG/tsgen/capabilities/law_observability.py'
-patch(p, 'from .array_store import ArrayStore', 'from .array_store import ArrayStore\nfrom .grouped_statistics import paired_c2st, cluster_energy_interval\nfrom scipy.spatial.distance import cdist, pdist')
-patch(p, '        clean_features: list[np.ndarray] = []', '        group_ids: list[str] = []\n        clean_features: list[np.ndarray] = []')
-patch(p, '            for group in instance.event_groups:\n', '            for group in instance.event_groups:\n                group_ids.append(f"{instance.variant_id}/{instance.split}/{instance.instance_id}")\n')
-patch(p, '                bootstrap_samples=protocol.bootstrap_samples,', '                bootstrap_samples=protocol.bootstrap_samples,\n                groups=np.asarray(group_ids),')
-patch(p, '    rng: np.random.Generator,\n) -> dict[str, object]:', '    rng: np.random.Generator,\n    groups: np.ndarray | None = None,\n) -> dict[str, object]:')
-patch(p, '    energy = _energy_distance(clean, anomalous)', '    raw_clean, raw_anomalous = clean, anomalous\n    clean, anomalous = _standardize_pair(clean, anomalous)\n    energy = _energy_distance(clean, anomalous)')
-patch(p, '    c2st = _nearest_centroid_balanced_accuracy(clean, anomalous)', '    c2st = paired_c2st(raw_clean, raw_anomalous, groups)')
-patch(p, '        samples=int(bootstrap_samples),', '        samples=int(bootstrap_samples),\n        groups=groups,')
-patch(p, '        "feature_space": "event_window_summary",', '        "feature_space": "signed_relations_event_summary_v2",\n        "independent_group_count": int(len(np.unique(groups))) if groups is not None else len(clean),\n        "uncertainty_unit": "paired_instance_cluster",')
-patch(p, '    corr_proxy = 0.0', '    signed_pairs = np.zeros(matrix.shape[1]*(matrix.shape[1]-1)//2)\n    corr_proxy = 0.0')
-patch(p, '        corr_proxy = float(np.nanmean(np.abs(corr[mask])))', '        signed_pairs = np.nan_to_num(corr[np.triu_indices(corr.shape[0], 1)])\n        corr_proxy = float(np.nanmean(corr[mask]))')
-patch(p, '    features[~np.isfinite(features)] = 0.0', '    features = np.r_[features, signed_pairs]\n    features[~np.isfinite(features)] = 0.0')
-patch(p, '    return _standardize_pair(clean, anomalous)', '    return clean, anomalous')
-f = r/p; s = f.read_text()
-a = s.index('    diff = left[:, None, :] - right[None, :, :]\n', s.index('def _mean_pairwise_distance')); b = s.index('\n\n\ndef ', a)
-s = s[:a]+'''    total = 0.0
-    for i in range(0, len(left), 256):
-        for j in range(0, len(right), 256):
-            total += float(cdist(left[i:i+256], right[j:j+256]).sum())
-    return total / (len(left)*len(right))'''+s[b:]
-a = s.index('    distances = []', s.index('def _median_gamma')); b = s.index('    return 1.0 / max(median, 1e-8)', a)
-s = s[:a]+'''    subset = values[np.linspace(0, len(values)-1, min(len(values), 1024), dtype=int)]
-    distances = pdist(subset, metric="sqeuclidean")
-    median = float(np.median(distances)) if distances.size else 1.0
-'''+s[b:]
-s = s.replace('    diff = left[:, None, :] - right[None, :, :]\n    sqdist = np.sum(np.square(diff), axis=2)', '    sqdist = cdist(left, right, metric="sqeuclidean")')
-a = s.index('    if clean.shape[0] < 2', s.index('def _nearest_centroid_balanced_accuracy')); b = s.index('\n\ndef _nearest_label', a)
-s = s[:a]+'    return paired_c2st(clean, anomalous)\n'+s[b:]
-a = s.index('def _bootstrap_ci('); b = s.index('\n\ndef _law_status', a)
-s = s[:a]+'''def _bootstrap_ci(
-    clean: np.ndarray, anomalous: np.ndarray, *, samples: int,
-    rng: np.random.Generator, groups: np.ndarray | None = None,
-) -> tuple[float, float]:
-    group = np.arange(len(clean)) if groups is None else groups
-    return cluster_energy_interval(clean, anomalous, group, samples=samples, rng=rng)
-'''+s[b:]
-a = s.index('    k_xx = _rbf_kernel(clean, clean, gamma)'); b = s.index('\n\ndef _median_gamma', a)
-s = s[:a]+'''    def mean_kernel(left, right):
-        total = 0.0
-        for i in range(0, len(left), 256):
-            for j in range(0, len(right), 256):
-                total += float(_rbf_kernel(left[i:i+256], right[j:j+256], gamma).sum())
-        return total / (len(left)*len(right))
-    return float(max(0.0, mean_kernel(clean, clean) + mean_kernel(anomalous, anomalous)
-                     - 2*mean_kernel(clean, anomalous)))
-'''+s[b:]
-s = s.replace('        "partition_size": int(partition_size),', '        "partition_size": int(partition_size),\n        "law_feature_version": "signed_relations_cluster_v2",')
-f.write_text(s)
-# Regression expectations for intentionally changed contracts. No test removed.
-p = 'tests/test_parameter_sampling.py'; f = r/p; s = f.read_text()
-a = s.index('    def test_reject_if_abs_lt_falls_back_to_threshold'); b = s.index('    def test_rejects_invalid_distribution_specs', a)
-s = s[:a]+'''    def test_reject_if_abs_lt_rejects_impossible_prior(self) -> None:
-        with self.assertRaisesRegex(ValueError, "exhausted"):
-            realize_parameters(
-                {"offset": {"distribution": "reject_if_abs_lt", "threshold": 0.25, "base": 0.0}},
-                np.random.default_rng(3),
-            )
 
-'''+s[b:]; f.write_text(s)
-p = 'tests/test_corrected_detectability_partitions.py'; f = r/p; s = f.read_text()
-if 'import pytest' not in s:
-    s = 'import pytest\n'+s
-    # This file has no __future__ statement in the pinned base.
-a = s.index('def test_calibration_null_instances_falls_back_to_variant_instances'); b = s.index('\n\ndef ', a+5)
-s = s[:a]+'''def test_missing_explicit_calibration_split_fails_closed() -> None:
-    from types import SimpleNamespace
-    instances = (SimpleNamespace(split="train"), SimpleNamespace(split="test"))
-    with pytest.raises(ValueError, match="absent"):
-        calibration_null_instances(instances, CapabilityProtocol(calibration_split="missing"))
-    assert calibration_null_instances(instances, CapabilityProtocol()) == instances
-'''+s[b:]; f.write_text(s)
-patch('tests/test_paired_instance_generation.py', '"generate_base_instance_series": fake_generate_base_instance_series', '"_generate_anomalous_base_series": fake_generate_base_instance_series')
-patch('tests/test_paired_instance_generation.py', 'assert calls["base_series"]["base_kind"] == "sine"', 'assert calls["base_series"]["variant"].base_oscillation == "sine"')
-p = 'tests/test_group_relation_policy.py'
-patch(p, 'test_shared_noise_sine_strengthens_relation_targets', 'test_shared_noise_sine_preserves_requested_relation_targets')
-patch(p, 'target_correlation=-0.2), -0.92', 'target_correlation=-0.2), -0.2')
-patch(p, 'coupling_strength=0.3), 0.95', 'coupling_strength=0.3), 0.3')
-patch('tests/test_ts_dataset_group_relations.py', 'self.assertLess(anomalous_corr, -0.5)', '''# No hidden target amplification: require the requested direction,
-                    # not the obsolete hard-coded -0.92 target floor.
-                    self.assertLess(anomalous_corr, clean_corr - 0.3)''')
-patch('tests/test_v13_benchmark_contracts.py', 'rows.append({"source_length": length + delta * 0.01})', 'rows.append({"source_length": length + delta * 0.01, "effective_length": length, "boundary_jump": 0., "derivative_jump": 0., "realized_density": .1, "transition_length": 0.})')
-patch('tests/configs/example-config-trend-anomaly.yaml', '          - kind: trend\n', '          - kind: trend\n            boundary_mode: inside_window_zero_endpoints\n')
-p = 'gutenTAG/tsgen/processes/kernels.py'
-patch(p, '    alpha: float = 1.0', '    alpha: float = 1.0\n    periodic_smoothness: float = 1.0')
-patch(p, '("length_scale", "period", "alpha")', '("length_scale", "period", "alpha", "periodic_smoothness")')
-patch(p, '/ self.length_scale**2)', '/ self.periodic_smoothness**2)')
-patch(p, 'k = 0.5 / self.length_scale**2', 'k = 0.5 / self.periodic_smoothness**2')
-print('Applied all assertion-guarded audit changes')
+def test_gp_offset_is_added_exactly_once_and_scale_not_forced():
+    from gutenTAG.base_oscillations.gp_mixture import GaussianProcessMixture
+    from gutenTAG.generator.base_channels import apply_variations
+    def generate(offset, seed):
+        bo = GaussianProcessMixture(length=100, offset=offset, gp_features=12, gp_components=2)
+        x = bo.generate_only_base(SimpleNamespace(rng=np.random.default_rng(seed)))
+        return apply_variations(x[:, None], [bo])[:, 0]
+    np.testing.assert_allclose(generate(3.25, 4)-generate(0, 4), 3.25)
+    assert np.std([generate(0, s).std() for s in range(8)]) > .05
+
+
+def test_linear_trend_is_not_annihilated_by_default():
+    from gutenTAG.anomalies.types.trend import AnomalyTrend, AnomalyTrendParameters
+    t = AnomalyTrend(AnomalyTrendParameters(trend=None))
+    x = np.linspace(2, 5, 33)
+    np.testing.assert_allclose(t._bounded_local_trend(x, np.ones_like(x)), x-x[0])
+
+
+def test_clone_is_exact_without_sharing_mutable_arrays():
+    from gutenTAG.tsgen.paired_instance_generation import _generate_anomalous_base_series
+    state = SimpleNamespace(base_values=np.arange(12).reshape(6, 2).astype(float),
+                            channel_bos=[SimpleNamespace(noise=np.ones(6))])
+    clone = _generate_anomalous_base_series(config=None, variant=None, seeds={},
+                                           base_instance=SimpleNamespace(series=state),
+                                           effective_base_channel_correlation={})
+    np.testing.assert_array_equal(clone.base_values, state.base_values)
+    clone.base_values[0, 0] = 999
+    clone.channel_bos[0].noise[0] = 999
+    assert state.base_values[0, 0] == 0 and state.channel_bos[0].noise[0] == 1
+
+
+def test_empty_effect_support_and_unknown_resample_policy():
+    from gutenTAG.tsgen.labels.effective_support import resolve_label_bounds_from_effect, normalize_subsequence_length
+    assert resolve_label_bounds_from_effect(protocol_start=8, protocol_end=16, delta=np.zeros(8),
+        anomaly_type="mean", support_label_mode="effective_support", support_eps_mode="relative",
+        support_eps_value=.03, min_effective_label_length_non_extremum=2) == (8, 8)
+    with pytest.raises(ValueError, match="Unknown"):
+        normalize_subsequence_length(np.ones(8), 8, "typo")
+
+
+def test_fully_blind_channel_permutation_invariance():
+    from gutenTAG.tsgen.capabilities.v13_evaluation import blind_scan
+    law = sample_law("diagonal-ar", 5, 8)
+    ref, query = law.sample(256, 9).values, law.sample(256, 10).values
+    perm = [2, 4, 0, 3, 1]
+    a = blind_scan(ref, query, windows=(16, 32), stride=8)
+    b = blind_scan(ref[:, perm], query[:, perm], windows=(16, 32), stride=8)
+    np.testing.assert_allclose(a.scores, b.scores)
+
+
+def test_unsupported_causal_mixture_is_rejected():
+    x = sample_law("diagonal-ar", 3, 2).sample(128, 7)
+    with pytest.raises(ValueError, match="causal composition"):
+        apply_interventions(x, [Intervention("covariance-change", 16, 32, .5, (0,)),
+                                 Intervention("clipping", 64, 96, .5, (0,))], seed=9)
+
+
+def test_v13_cannot_be_silently_discovered_by_legacy_loader(tmp_path):
+    from gutenTAG.tsgen.capabilities.dataset import discover_dataset
+    (tmp_path / "dataset_manifest.json").write_text('{"schema_version": "synthgen.v13.1"}')
+    with pytest.raises(ValueError, match="evaluate_benchmark"):
+        discover_dataset(tmp_path)
+
+
+def test_streamed_annotation_manifest_hashes_final_bytes(tmp_path):
+    from gutenTAG.tsgen.sidecars import write_dataset_annotation_channels, _file_hash
+    from gutenTAG.tsgen.capabilities.dataset import DatasetIndex
+    dataset = DatasetIndex(root=tmp_path, manifest={}, instances=(), metadata_events={}, problem_genotypes={})
+    result = write_dataset_annotation_channels(dataset, config={"emit": ["oracle"]})
+    path = tmp_path / result["manifest_path"]
+    assert result["manifest_hash"] == _file_hash(path)
+    assert "manifest_hash" not in json.loads(path.read_text())
+''')
+print('Applied final regression corrections')
