@@ -5,6 +5,7 @@ from .cylinder_bell_funnel import CylinderBellFunnel
 from .dirichlet import Dirichlet
 from .ecg import ECG
 from .formula import Formula  # type: ignore  # mypy ends up in recursion
+from .gp_mixture import GaussianProcessMixture
 from .interface import BaseOscillationInterface
 from .mls import MLS
 from .polynomial import Polynomial
