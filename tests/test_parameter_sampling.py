@@ -35,7 +35,13 @@ class TestParameterSampling(unittest.TestCase):
     def test_reject_if_abs_lt_rejects_impossible_prior(self) -> None:
         with self.assertRaisesRegex(ValueError, "exhausted"):
             realize_parameters(
-                {"offset": {"distribution": "reject_if_abs_lt", "threshold": 0.25, "base": 0.0}},
+                {
+                    "offset": {
+                        "distribution": "reject_if_abs_lt",
+                        "threshold": 0.25,
+                        "base": 0.0,
+                    }
+                },
                 np.random.default_rng(3),
             )
 

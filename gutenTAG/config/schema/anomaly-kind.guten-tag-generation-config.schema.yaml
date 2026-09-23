@@ -54,7 +54,7 @@ oneOf:
         description: Boundary-safe blend width used at event edges.
       boundary_mode:
         type: string
-        enum: [inside_window_zero_endpoints, legacy_carry_over]
+        enum: [inside_window_preserve_shape, inside_window_zero_endpoints, legacy_carry_over]
       envelope_kind:
         type: string
         enum: [sine2, sin2, transition]
@@ -261,6 +261,10 @@ definitions:
     properties:
       kind:
         const: variance
+      noise_std_ratio:
+        type: number
+        minimum: 0
+        description: Standard-deviation ratio; one is the identity with shared innovations.
       variance:
         type: number
         description: Value of the new variance.

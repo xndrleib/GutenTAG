@@ -1,4 +1,5 @@
 """Gaussian feature-mixture carrier with explicitly specified target kernels."""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -31,8 +32,10 @@ class GaussianProcessMixture(BaseOscillationInterface):
         self.gp_linear_weight = float(kwargs.get("gp_linear_weight", 0.2))
         if self.gp_components < 1 or self.gp_features < 1:
             raise ValueError("GP components and features must be positive")
-        for lo, hi in ((self.gp_length_scale_min, self.gp_length_scale_max),
-                       (self.gp_period_min, self.gp_period_max)):
+        for lo, hi in (
+            (self.gp_length_scale_min, self.gp_length_scale_max),
+            (self.gp_period_min, self.gp_period_max),
+        ):
             if not np.isfinite([lo, hi]).all() or not 0 < lo <= hi:
                 raise ValueError("GP ranges must be finite, positive and ordered")
         if not np.isfinite(self.gp_linear_weight) or self.gp_linear_weight < 0:
@@ -44,8 +47,9 @@ class GaussianProcessMixture(BaseOscillationInterface):
     def get_timeseries_periods(self) -> Optional[int]:
         return None
 
-    def generate_only_base(self, ctx: BOGenerationContext,
-                           length: Optional[int] = None, *args, **kwargs) -> np.ndarray:
+    def generate_only_base(
+        self, ctx: BOGenerationContext, length: Optional[int] = None, *args, **kwargs
+    ) -> np.ndarray:
         n = int(self.length if length is None else length)
         if n < 1:
             raise ValueError("GP length must be positive")
@@ -58,8 +62,14 @@ class GaussianProcessMixture(BaseOscillationInterface):
         for weight in weights:
             spec = KernelSpec(
                 kind=str(rng.choice(KERNELS)),
-                length_scale=float(np.exp(rng.uniform(np.log(self.gp_length_scale_min),
-                                                     np.log(self.gp_length_scale_max)))),
+                length_scale=float(
+                    np.exp(
+                        rng.uniform(
+                            np.log(self.gp_length_scale_min),
+                            np.log(self.gp_length_scale_max),
+                        )
+                    )
+                ),
                 period=float(rng.uniform(self.gp_period_min, self.gp_period_max)),
                 alpha=float(np.exp(rng.uniform(-1.0, 1.0))),
             )
@@ -68,7 +78,7 @@ class GaussianProcessMixture(BaseOscillationInterface):
             self.kernel_metadata.append({**vars(spec), "weight": float(weight)})
         if self.gp_linear_weight:
             slope, curvature = rng.normal(size=2) * self.gp_linear_weight
-            result += slope * (t - 0.5) + 0.5 * curvature * (t - 0.5)**2
+            result += slope * (t - 0.5) + 0.5 * curvature * (t - 0.5) ** 2
         return float(self.amplitude) * result
 
 

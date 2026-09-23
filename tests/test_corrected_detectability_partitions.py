@@ -46,9 +46,12 @@ def test_calibration_null_instances_prefers_configured_split() -> None:
 
 def test_missing_explicit_calibration_split_fails_closed() -> None:
     from types import SimpleNamespace
+
     instances = (SimpleNamespace(split="train"), SimpleNamespace(split="test"))
     with pytest.raises(ValueError, match="absent"):
-        calibration_null_instances(instances, CapabilityProtocol(calibration_split="missing"))
+        calibration_null_instances(
+            instances, CapabilityProtocol(calibration_split="missing")
+        )
     assert calibration_null_instances(instances, CapabilityProtocol()) == instances
 
 

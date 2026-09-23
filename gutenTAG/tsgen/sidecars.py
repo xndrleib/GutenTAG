@@ -101,13 +101,16 @@ def write_dataset_annotation_channels(
     for instance in dataset.instances:
         events = load_json(instance.events_path)
         channels = build_annotation_channels(
-            length=instance.length, channels=instance.channels, events=events,
+            length=instance.length,
+            channels=instance.channels,
+            events=events,
         )
         for name in selected_channels:
             channel = channels[name]
             frame = _flatten_label_table(instance, channel.values, channel.columns)
-            frame.to_csv(temp_paths[name], mode="a", index=False,
-                         header=row_counts[name] == 0)
+            frame.to_csv(
+                temp_paths[name], mode="a", index=False, header=row_counts[name] == 0
+            )
             row_counts[name] += len(frame)
     for name, temp in temp_paths.items():
         path = labels_dir / f"{name}.csv"

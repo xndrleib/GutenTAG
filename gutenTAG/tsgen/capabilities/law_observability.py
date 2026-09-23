@@ -113,7 +113,9 @@ def _law_observability_for_keys(
                 else read_timeseries_csv(instance.anomalous_path)
             )
             for group in instance.event_groups:
-                group_ids.append(f"{instance.variant_id}/{instance.split}/{instance.instance_id}")
+                group_ids.append(
+                    f"{instance.variant_id}/{instance.split}/{instance.instance_id}"
+                )
                 channels = _event_channels(group, instance.channels)
                 clean_features.append(
                     _window_features(clean, group.start, group.end, channels)
@@ -203,7 +205,9 @@ def _profile_row(
         "constraint_tag": constraint_tag,
         "semantic_scope": semantic_scope,
         "feature_space": "signed_relations_event_summary_v2",
-        "independent_group_count": int(len(np.unique(groups))) if groups is not None else len(clean),
+        "independent_group_count": (
+            int(len(np.unique(groups))) if groups is not None else len(clean)
+        ),
         "uncertainty_unit": "paired_instance_cluster",
         "clean_sample_count": int(clean.shape[0]),
         "anomalous_sample_count": int(anomalous.shape[0]),
@@ -238,7 +242,7 @@ def _window_features(
     matrix = np.atleast_2d(segment)
     flat = matrix.reshape(-1)
     diffs = np.diff(matrix, axis=0) if matrix.shape[0] >= 2 else np.zeros_like(matrix)
-    signed_pairs = np.zeros(matrix.shape[1]*(matrix.shape[1]-1)//2)
+    signed_pairs = np.zeros(matrix.shape[1] * (matrix.shape[1] - 1) // 2)
     corr_proxy = 0.0
     if matrix.shape[1] >= 2 and matrix.shape[0] >= 3:
         corr = np.asarray(np.corrcoef(matrix, rowvar=False), dtype=np.float64)
@@ -246,7 +250,7 @@ def _window_features(
         signed_pairs = np.nan_to_num(corr[np.triu_indices(corr.shape[0], 1)])
         corr_proxy = float(np.nanmean(corr[mask]))
         if not math.isfinite(corr_proxy):
-            signed_pairs = np.zeros(matrix.shape[1]*(matrix.shape[1]-1)//2)
+            signed_pairs = np.zeros(matrix.shape[1] * (matrix.shape[1] - 1) // 2)
     corr_proxy = 0.0
     features = np.asarray(
         [
@@ -319,28 +323,38 @@ def _mean_pairwise_distance(left: np.ndarray, right: np.ndarray) -> float:
     total = 0.0
     for i in range(0, len(left), 256):
         for j in range(0, len(right), 256):
-            total += float(cdist(left[i:i+256], right[j:j+256]).sum())
-    return total / (len(left)*len(right))
+            total += float(cdist(left[i : i + 256], right[j : j + 256]).sum())
+    return total / (len(left) * len(right))
 
 
 def _mmd_rbf(clean: np.ndarray, anomalous: np.ndarray) -> float:
     if clean.size == 0 or anomalous.size == 0:
         return math.nan
     gamma = _median_gamma(np.vstack([clean, anomalous]))
+
     def mean_kernel(left, right):
         total = 0.0
         for i in range(0, len(left), 256):
             for j in range(0, len(right), 256):
-                total += float(_rbf_kernel(left[i:i+256], right[j:j+256], gamma).sum())
-        return total / (len(left)*len(right))
-    return float(max(0.0, mean_kernel(clean, clean) + mean_kernel(anomalous, anomalous)
-                     - 2*mean_kernel(clean, anomalous)))
+                total += float(
+                    _rbf_kernel(left[i : i + 256], right[j : j + 256], gamma).sum()
+                )
+        return total / (len(left) * len(right))
+
+    return float(
+        max(
+            0.0,
+            mean_kernel(clean, clean)
+            + mean_kernel(anomalous, anomalous)
+            - 2 * mean_kernel(clean, anomalous),
+        )
+    )
 
 
 def _median_gamma(values: np.ndarray) -> float:
     if values.shape[0] < 2:
         return 1.0
-    subset = values[np.linspace(0, len(values)-1, min(len(values), 1024), dtype=int)]
+    subset = values[np.linspace(0, len(values) - 1, min(len(values), 1024), dtype=int)]
     distances = pdist(subset, metric="sqeuclidean")
     median = float(np.median(distances)) if distances.size else 1.0
     return 1.0 / max(median, 1e-8)
@@ -402,8 +416,12 @@ def _gaussian_kl(
 
 
 def _bootstrap_ci(
-    clean: np.ndarray, anomalous: np.ndarray, *, samples: int,
-    rng: np.random.Generator, groups: np.ndarray | None = None,
+    clean: np.ndarray,
+    anomalous: np.ndarray,
+    *,
+    samples: int,
+    rng: np.random.Generator,
+    groups: np.ndarray | None = None,
 ) -> tuple[float, float]:
     group = np.arange(len(clean)) if groups is None else groups
     return cluster_energy_interval(clean, anomalous, group, samples=samples, rng=rng)

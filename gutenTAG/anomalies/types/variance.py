@@ -64,7 +64,7 @@ class AnomalyVariance(BaseAnomaly):
                 raise ValueError("noise_std_ratio must be finite and nonnegative")
             envelope = self.build_symmetric_envelope(length, self.transition_length)
             # Reuse innovations: ratio=1 is a true null, not resampled noise.
-            base.noise[anomaly_protocol.start:anomaly_protocol.end] = (
+            base.noise[anomaly_protocol.start : anomaly_protocol.end] = (
                 original_noise * (1.0 + envelope * (ratio - 1.0))
             )
             return

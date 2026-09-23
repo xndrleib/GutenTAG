@@ -108,6 +108,10 @@ def discover_dataset(
     manifest: Mapping[str, Any] = {}
     if manifest_path.exists():
         manifest = load_json(manifest_path)
+        if manifest.get("schema_version") == "synthgen.v13.1":
+            raise ValueError(
+                "v13.1 law datasets require evaluate_benchmark; legacy capability discovery would lose observation masks and oracle boundaries"
+            )
     metadata_events = (
         _load_registry_events(dataset_root / "metadata" / "events.jsonl")
         if prefer_metadata_registry

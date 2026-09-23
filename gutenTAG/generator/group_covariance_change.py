@@ -217,13 +217,20 @@ def _apply_covariance_rewrite(
     runtime: Any,
 ) -> str:
     lmc = recouple_lmc_target(
-        bo=channel_bos[state.channel], anchor=context.anchor_channel,
-        start=context.source_start, end=context.source_end,
-        target_correlation=state.effective_strength, transition=state.transition_length,
+        bo=channel_bos[state.channel],
+        anchor=context.anchor_channel,
+        start=context.source_start,
+        end=context.source_end,
+        target_correlation=state.effective_strength,
+        transition=state.transition_length,
     )
     if lmc is not None:
-        runtime.replace_noise(bo=channel_bos[state.channel], start=context.source_start,
-                              end=context.source_end, target_noise=lmc)
+        runtime.replace_noise(
+            bo=channel_bos[state.channel],
+            start=context.source_start,
+            end=context.source_end,
+            target_noise=lmc,
+        )
         return "noise"
     latent = latent_shared_noise_attrs(
         channel_bos[state.channel],
@@ -271,7 +278,7 @@ def _rewrite_covariance_noise(
         state.before_noise,
         effective_latent_transition_length(
             channel_bos[state.channel],
-            max(0, min(state.transition_length, 8)),
+            max(0, state.transition_length),
         ),
     )
     runtime.replace_noise(

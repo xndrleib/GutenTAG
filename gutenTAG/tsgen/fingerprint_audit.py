@@ -1,12 +1,19 @@
 """Nuisance diagnostics with explicit group holdout and training-only scaling."""
+
 from __future__ import annotations
 
 from typing import Mapping, Sequence
 import numpy as np
 from .capabilities.grouped_statistics import grouped_centroid_accuracy
 
-NUISANCE_FEATURES = ("source_length", "effective_length", "boundary_jump",
-                     "derivative_jump", "realized_density", "transition_length")
+NUISANCE_FEATURES = (
+    "source_length",
+    "effective_length",
+    "boundary_jump",
+    "derivative_jump",
+    "realized_density",
+    "transition_length",
+)
 
 
 def nuisance_matrix(rows: Sequence[Mapping[str, object]]) -> np.ndarray:
@@ -22,9 +29,11 @@ def nuisance_matrix(rows: Sequence[Mapping[str, object]]) -> np.ndarray:
     return result
 
 
-def nearest_centroid_fingerprint_accuracy(rows: Sequence[Mapping[str, object]],
-                                         labels: Sequence[str],
-                                         groups: Sequence[str] | None = None) -> float:
+def nearest_centroid_fingerprint_accuracy(
+    rows: Sequence[Mapping[str, object]],
+    labels: Sequence[str],
+    groups: Sequence[str] | None = None,
+) -> float:
     """Return balanced held-out accuracy, not a shortcut-absence certificate.
 
     Supply system IDs for correlated replicas/windows. With groups=None this

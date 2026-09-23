@@ -45,8 +45,12 @@ def realize_parameters(
     """Realize a parameter template into concrete values."""
 
     return {
-        str(key): (copy.deepcopy(value) if str(key) in {"polynomial", "coefficients"}
-                   and isinstance(value, (list, tuple)) else _realize_parameter_value(value, rng))
+        str(key): (
+            copy.deepcopy(value)
+            if str(key) in {"polynomial", "coefficients"}
+            and isinstance(value, (list, tuple))
+            else _realize_parameter_value(value, rng)
+        )
         for key, value in dict(template).items()
     }
 
@@ -169,7 +173,9 @@ def _sample_with_abs_rejection(
         candidate = _sample_abs_rejection_candidate(base_spec, rng, nested)
         if _candidate_passes_abs_threshold(candidate, threshold):
             return candidate
-    raise ValueError("Rejection sampler exhausted: requested effect is outside the prior support")
+    raise ValueError(
+        "Rejection sampler exhausted: requested effect is outside the prior support"
+    )
 
 
 def _sample_abs_rejection_candidate(

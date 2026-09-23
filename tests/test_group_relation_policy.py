@@ -49,14 +49,12 @@ class TestGroupRelationPolicy(unittest.TestCase):
     def test_shared_noise_sine_preserves_requested_relation_targets(self) -> None:
         bo = BaseChannel("shared-noise-sine")
 
-        self.assertEqual(effective_latent_transition_length(bo, 20), 6)
-        self.assertEqual(effective_latent_transition_length(bo, 0), 1)
+        self.assertEqual(effective_latent_transition_length(bo, 20), 20)
+        self.assertEqual(effective_latent_transition_length(bo, 0), 0)
         self.assertEqual(
             effective_relation_target(bo=bo, target_correlation=-0.2), -0.2
         )
-        self.assertEqual(
-            effective_coupling_strength(bo=bo, coupling_strength=0.3), 0.3
-        )
+        self.assertEqual(effective_coupling_strength(bo=bo, coupling_strength=0.3), 0.3)
         self.assertTrue(prefer_observed_relation_rewrite(bo))
 
     def test_default_base_keeps_relation_policy_values(self) -> None:

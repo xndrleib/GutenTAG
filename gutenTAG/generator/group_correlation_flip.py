@@ -226,13 +226,20 @@ def _apply_correlation_rewrite(
     runtime: Any,
 ) -> str:
     lmc = recouple_lmc_target(
-        bo=channel_bos[state.channel], anchor=context.anchor_channel,
-        start=context.source_start, end=context.source_end,
-        target_correlation=state.effective_target_correlation, transition=state.transition_length,
+        bo=channel_bos[state.channel],
+        anchor=context.anchor_channel,
+        start=context.source_start,
+        end=context.source_end,
+        target_correlation=state.effective_target_correlation,
+        transition=state.transition_length,
     )
     if lmc is not None:
-        runtime.replace_noise(bo=channel_bos[state.channel], start=context.source_start,
-                              end=context.source_end, target_noise=lmc)
+        runtime.replace_noise(
+            bo=channel_bos[state.channel],
+            start=context.source_start,
+            end=context.source_end,
+            target_noise=lmc,
+        )
         return "noise"
     latent = latent_shared_noise_attrs(
         channel_bos[state.channel],

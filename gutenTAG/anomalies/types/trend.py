@@ -143,7 +143,11 @@ class AnomalyTrend(BaseAnomaly):
             local -= local[0] if local.size else 0.0
         else:
             raise ValueError(f"Unknown trend boundary_mode: {self.boundary_mode}")
-        if self.boundary_mode == "inside_window_zero_endpoints" and self.envelope_kind in ("sine2", "sin2") and local.shape[0] > 1:
+        if (
+            self.boundary_mode == "inside_window_zero_endpoints"
+            and self.envelope_kind in ("sine2", "sin2")
+            and local.shape[0] > 1
+        ):
             phase = np.linspace(0.0, np.pi, local.shape[0], dtype=np.float64)
             local *= np.sin(phase) ** 2
         elif self.envelope_kind == "transition":

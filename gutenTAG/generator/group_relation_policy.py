@@ -38,9 +38,6 @@ def latent_shared_noise_attrs(
 
 def effective_latent_transition_length(bo: Any, transition_length: int) -> int:
     """Return transition length for latent-noise rewrites."""
-    kind = str(bo.get_base_oscillation_kind())
-    if kind == "shared-noise-sine":
-        return int(max(1, min(int(transition_length), 6)))
     return int(max(0, transition_length))
 
 
@@ -52,7 +49,6 @@ def effective_relation_target(
     """Return target correlation after base-specific relation policy."""
     if target_correlation is None:
         return None
-    kind = str(bo.get_base_oscillation_kind())
     if not np.isfinite(target_correlation) or abs(target_correlation) > 1:
         raise ValueError("target_correlation must be finite and in [-1, 1]")
     return float(target_correlation)
@@ -64,7 +60,6 @@ def effective_coupling_strength(
     coupling_strength: float,
 ) -> float:
     """Return coupling strength after base-specific relation policy."""
-    kind = str(bo.get_base_oscillation_kind())
     if not np.isfinite(coupling_strength) or abs(coupling_strength) > 1:
         raise ValueError("coupling_strength must be finite and in [-1, 1]")
     return float(coupling_strength)

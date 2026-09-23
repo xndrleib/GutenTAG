@@ -197,11 +197,11 @@ class ConfigParser:
     ) -> Optional[BaseAnomaly]:
         kind = d[PARAMETERS.KIND]
         if kind == PARAMETERS.TREND:
-            parameters = {
-                PARAMETERS.TREND: decode_trend_obj(
-                    deepcopy(d[PARAMETERS.OSCILLATION]), length
-                )
-            }
+            parameters = deepcopy(d)
+            del parameters[PARAMETERS.KIND]
+            parameters[PARAMETERS.TREND] = decode_trend_obj(
+                parameters.pop(PARAMETERS.OSCILLATION), length
+            )
         else:
             parameters = deepcopy(d)
             del parameters[PARAMETERS.KIND]

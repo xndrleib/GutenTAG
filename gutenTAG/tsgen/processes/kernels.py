@@ -4,6 +4,7 @@ Random spectra belong to the law; Gaussian feature coefficients belong to the
 realization. Paired sine/cosine features give exactly unit pointwise variance
 conditional on a spectrum. No trajectory-dependent normalization is performed.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -41,9 +42,10 @@ class KernelSpec:
             return (1.0 + u) * np.exp(-u)
         if self.kind == "rq":
             return (1.0 + r * r / (2.0 * self.alpha)) ** (-self.alpha)
-        periodic = np.exp(-2.0 * np.sin(np.pi * lag / self.period) ** 2
-                          / self.periodic_smoothness**2)
-        return periodic if self.kind == "periodic" else periodic * np.exp(-0.5*r*r)
+        periodic = np.exp(
+            -2.0 * np.sin(np.pi * lag / self.period) ** 2 / self.periodic_smoothness**2
+        )
+        return periodic if self.kind == "periodic" else periodic * np.exp(-0.5 * r * r)
 
     def spectrum(self, rng: np.random.Generator, features: int) -> np.ndarray:
         """Sample angular frequencies for this kernel (not cycles/time)."""
@@ -54,7 +56,7 @@ class KernelSpec:
         if self.kind == "matern32":
             return rng.standard_t(3, size=features) / self.length_scale
         if self.kind == "rq":
-            precision = rng.gamma(self.alpha, 1.0/self.alpha, size=features)
+            precision = rng.gamma(self.alpha, 1.0 / self.alpha, size=features)
             return rng.normal(size=features) * np.sqrt(precision) / self.length_scale
         k = 0.5 / self.periodic_smoothness**2
         harmonics = rng.poisson(k, features) - rng.poisson(k, features)
@@ -64,8 +66,13 @@ class KernelSpec:
         return np.asarray(omega, dtype=float)
 
 
-def feature_sample(omega: np.ndarray, times: np.ndarray,
-                   rng: np.random.Generator, *, block_size: int = 2048) -> np.ndarray:
+def feature_sample(
+    omega: np.ndarray,
+    times: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    block_size: int = 2048,
+) -> np.ndarray:
     """Draw one realization with O(block_size * features) temporary memory."""
     omega = np.asarray(omega, dtype=float)
     times = np.asarray(times, dtype=float)
@@ -77,6 +84,6 @@ def feature_sample(omega: np.ndarray, times: np.ndarray,
     a, b = rng.normal(size=(2, omega.size)) / np.sqrt(omega.size)
     result = np.empty(times.size)
     for start in range(0, times.size, block_size):
-        phase = times[start:start+block_size, None] * omega[None, :]
-        result[start:start+block_size] = np.cos(phase) @ a + np.sin(phase) @ b
+        phase = times[start : start + block_size, None] * omega[None, :]
+        result[start : start + block_size] = np.cos(phase) @ a + np.sin(phase) @ b
     return result
