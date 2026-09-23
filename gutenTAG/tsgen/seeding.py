@@ -121,6 +121,7 @@ def derive_instance_seeds(
     variant_id: str,
     split: str,
     instance_index: int,
+    split_parameter_policy: str = "matched",
 ) -> dict[str, int]:
     """Derive all runtime seeds for one generated instance.
 
