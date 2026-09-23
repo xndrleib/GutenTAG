@@ -136,6 +136,7 @@ class TSGeneratorConfig:
     base_channel_correlation: Dict[str, Any] = field(default_factory=dict)
     split_phase_shift: Dict[str, Any] = field(default_factory=dict)
     anomaly_parameter_policy: str = "fixed_per_variant"
+    split_parameter_policy: str = "matched"
     base_oscillation_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     anomaly_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     variant_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -245,6 +246,7 @@ class TSGeneratorConfig:
                     "base_parameter_policy": self.base_parameter_policy,
                     "base_channel_parameter_policy": self.base_channel_parameter_policy,
                     "anomaly_parameter_policy": self.anomaly_parameter_policy,
+                    "split_parameter_policy": self.split_parameter_policy,
                     "base_oscillation_overrides": self.base_oscillation_overrides,
                     "base_channel_overrides": self.base_channel_overrides,
                     "base_channel_correlation": self.base_channel_correlation,
