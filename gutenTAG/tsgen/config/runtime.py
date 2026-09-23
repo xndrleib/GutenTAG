@@ -267,8 +267,19 @@ def validate_base_channel_correlation_mapping(mapping: Mapping[str, Any]) -> Non
     """
     if not isinstance(mapping, Mapping):
         raise ValueError("base_channel_correlation must be a mapping")
-    shared_noise_weight = float(dict(mapping).get("shared_noise_weight", 0.0))
+    cfg = dict(mapping)
+    shared_noise_weight = float(cfg.get("shared_noise_weight", 0.0))
     if shared_noise_weight < 0.0 or shared_noise_weight > 1.0:
         raise ValueError(
             "base_channel_correlation.shared_noise_weight must be in [0, 1]"
         )
+    mode = str(cfg.get("mode", "shared_noise"))
+    if mode not in {"shared_noise", "lmc"}:
+        raise ValueError("base_channel_correlation.mode must be 'shared_noise' or 'lmc'")
+    if int(cfg.get("lmc_rank", 1)) <= 0:
+        raise ValueError("base_channel_correlation.lmc_rank must be > 0")
+    sparsity = float(cfg.get("lmc_sparsity", 0.25))
+    if sparsity < 0.0 or sparsity >= 1.0:
+        raise ValueError("base_channel_correlation.lmc_sparsity must be in [0, 1)")
+    if float(cfg.get("lmc_idiosyncratic", 0.25)) <= 0.0:
+        raise ValueError("base_channel_correlation.lmc_idiosyncratic must be > 0")
