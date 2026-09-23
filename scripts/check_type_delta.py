@@ -23,6 +23,8 @@ def diagnostics(root: Path, destination: Path) -> Counter:
             "tests",
             "--no-pretty",
             "--no-incremental",
+            "--python-version",
+            f"{sys.version_info.major}.{sys.version_info.minor}",
         ],
         cwd=root,
         capture_output=True,
@@ -70,6 +72,7 @@ def main() -> None:
         "head_sha": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True
         ).strip(),
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         "base_errors": sum(old.values()),
         "head_errors": sum(new.values()),
         "new_errors": added,
