@@ -306,6 +306,12 @@ def _variant_parameter_policy_kwargs(
                 config.get("anomaly_parameter_policy", "fixed_per_variant"),
             )
         ),
+        "split_parameter_policy": str(
+            variants.get(
+                "split_parameter_policy",
+                config.get("split_parameter_policy", "matched"),
+            )
+        ),
     }
 
 
