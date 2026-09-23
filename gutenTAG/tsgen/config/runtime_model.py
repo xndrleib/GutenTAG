@@ -179,6 +179,10 @@ class TSGeneratorConfig:
         TSGeneratorConfig
             Validated configuration object.
         """
+        if config.get("schema_version") == "synthgen.v13.1":
+            raise ValueError(
+                "Use BenchmarkConfig and generate_benchmark for v13.1 law datasets"
+            )
         validate_raw_ts_config(dict(config))
         ts_config = cls(**build_runtime_config_kwargs(config))
         ts_config.validate()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 import numpy as np
 from .capabilities.grouped_statistics import grouped_centroid_accuracy
 
@@ -23,7 +23,7 @@ def nuisance_matrix(rows: Sequence[Mapping[str, object]]) -> np.ndarray:
         for j, key in enumerate(NUISANCE_FEATURES):
             if key not in row or row[key] is None:
                 raise ValueError(f"Missing nuisance measurement: {key}")
-            result[i, j] = float(row[key])
+            result[i, j] = float(cast(Any, row[key]))
     if not np.isfinite(result).all():
         raise ValueError("Nuisance measurements must be finite")
     return result

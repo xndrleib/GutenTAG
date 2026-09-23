@@ -235,11 +235,11 @@ def apply_interventions(
     effect = ~np.isclose(
         values, realization.values, rtol=0, atol=1e-12, equal_nan=True
     ) | (times != np.arange(n)[:, None])
-    for event in metadata:
-        lo, hi = event["start"], event["end"]
+    for record in metadata:
+        lo, hi = record["start"], record["end"]
         delta = values[lo:hi] - realization.values[lo:hi]
         finite = delta[np.isfinite(delta)]
-        event["realized_rms"] = (
+        record["realized_rms"] = (
             float(np.sqrt(np.mean(finite**2))) if finite.size else None
         )
     return InterventionResult(

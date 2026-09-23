@@ -56,7 +56,8 @@ def blind_scan(
         )
     if stride < 1 or not windows or min(windows) < 2 or max(windows) > len(values):
         raise ValueError("invalid scan grid")
-    starts, ends = [], []
+    starts: list[int] = []
+    ends: list[int] = []
     for w in sorted(set(windows)):
         grid = sorted(set(range(0, len(values) - w + 1, stride)) | {len(values) - w})
         starts.extend(grid)
