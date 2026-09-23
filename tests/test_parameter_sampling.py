@@ -32,19 +32,12 @@ class TestParameterSampling(unittest.TestCase):
         self.assertIn(result["choice"]["mode"], {"a", "b"})
         self.assertTrue(result["enabled"])
 
-    def test_reject_if_abs_lt_falls_back_to_threshold(self) -> None:
-        result = realize_parameters(
-            {
-                "offset": {
-                    "distribution": "reject_if_abs_lt",
-                    "threshold": 0.25,
-                    "base": 0.0,
-                }
-            },
-            np.random.default_rng(3),
-        )
-
-        self.assertEqual(abs(result["offset"]), 0.25)
+    def test_reject_if_abs_lt_rejects_impossible_prior(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exhausted"):
+            realize_parameters(
+                {"offset": {"distribution": "reject_if_abs_lt", "threshold": 0.25, "base": 0.0}},
+                np.random.default_rng(3),
+            )
 
     def test_rejects_invalid_distribution_specs(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-empty 'values'"):

@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 
 import numpy as np
@@ -43,11 +44,12 @@ def test_calibration_null_instances_prefers_configured_split() -> None:
     assert calibration_null_instances((train, calibration), protocol) == (calibration,)
 
 
-def test_calibration_null_instances_falls_back_to_variant_instances() -> None:
-    protocol = CapabilityProtocol(calibration_split="missing")
-    train = _instance("train")
-
-    assert calibration_null_instances((train,), protocol) == (train,)
+def test_missing_explicit_calibration_split_fails_closed() -> None:
+    from types import SimpleNamespace
+    instances = (SimpleNamespace(split="train"), SimpleNamespace(split="test"))
+    with pytest.raises(ValueError, match="absent"):
+        calibration_null_instances(instances, CapabilityProtocol(calibration_split="missing"))
+    assert calibration_null_instances(instances, CapabilityProtocol()) == instances
 
 
 def test_partition_payload_roundtrip_preserves_manifests_and_projects_rows() -> None:

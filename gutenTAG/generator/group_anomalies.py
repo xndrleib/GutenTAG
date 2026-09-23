@@ -47,6 +47,8 @@ def apply_group_anomaly(
     anomaly_parameters_per_segment: List[Dict[str, Any]],
     runtime: GroupAnomalyRuntime,
 ) -> List[Dict[str, Any]]:
+    if any(hasattr(bo, "_process_state") for bo in channel_bos) and anomaly_type not in {"covariance-change", "correlation-flip"}:
+        raise ValueError("Unsupported white-noise LMC operator; use the explicit v13 process-law API, not an observed-window fallback")
     handler = _GROUP_ANOMALY_HANDLERS.get(anomaly_type)
     if handler is None:
         raise ValueError(f"Unsupported group-level anomaly type: {anomaly_type}")

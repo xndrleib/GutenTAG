@@ -53,10 +53,8 @@ def effective_relation_target(
     if target_correlation is None:
         return None
     kind = str(bo.get_base_oscillation_kind())
-    if kind == "shared-noise-sine":
-        return float(
-            np.sign(target_correlation) * max(abs(float(target_correlation)), 0.92)
-        )
+    if not np.isfinite(target_correlation) or abs(target_correlation) > 1:
+        raise ValueError("target_correlation must be finite and in [-1, 1]")
     return float(target_correlation)
 
 
@@ -67,10 +65,8 @@ def effective_coupling_strength(
 ) -> float:
     """Return coupling strength after base-specific relation policy."""
     kind = str(bo.get_base_oscillation_kind())
-    if kind == "shared-noise-sine":
-        return float(
-            np.sign(coupling_strength) * max(abs(float(coupling_strength)), 0.95)
-        )
+    if not np.isfinite(coupling_strength) or abs(coupling_strength) > 1:
+        raise ValueError("coupling_strength must be finite and in [-1, 1]")
     return float(coupling_strength)
 
 

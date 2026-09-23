@@ -38,6 +38,6 @@ def test_fingerprint_classifier_detects_obvious_nuisance_leakage():
     labels = []
     for label, length in [("mean", 10.0), ("variance", 100.0)]:
         for delta in range(8):
-            rows.append({"source_length": length + delta * 0.01})
+            rows.append({"source_length": length + delta * 0.01, "effective_length": length, "boundary_jump": 0., "derivative_jump": 0., "realized_density": .1, "transition_length": 0.})
             labels.append(label)
     assert nearest_centroid_fingerprint_accuracy(rows, labels) > 0.9

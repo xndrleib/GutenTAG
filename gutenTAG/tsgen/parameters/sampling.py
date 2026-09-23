@@ -45,7 +45,8 @@ def realize_parameters(
     """Realize a parameter template into concrete values."""
 
     return {
-        str(key): _realize_parameter_value(value, rng)
+        str(key): (copy.deepcopy(value) if str(key) in {"polynomial", "coefficients"}
+                   and isinstance(value, (list, tuple)) else _realize_parameter_value(value, rng))
         for key, value in dict(template).items()
     }
 
@@ -53,14 +54,13 @@ def realize_parameters(
 def _realize_parameter_value(value: Any, rng: np.random.Generator) -> Any:
     if isinstance(value, Mapping):
         mapping = dict(value)
+        if set(mapping) == {"literal"}:
+            return copy.deepcopy(mapping["literal"])
         if "distribution" in mapping:
             return _sample_distribution(mapping, rng)
         if "min" in mapping and "max" in mapping and len(mapping) == 2:
             return sample_between(mapping["min"], mapping["max"], rng)
-        return {
-            str(key): _realize_parameter_value(nested, rng)
-            for key, nested in mapping.items()
-        }
+        return realize_parameters(mapping, rng)
     if isinstance(value, (list, tuple)):
         return _realize_sequence_value(value, rng)
     return value
@@ -169,8 +169,7 @@ def _sample_with_abs_rejection(
         candidate = _sample_abs_rejection_candidate(base_spec, rng, nested)
         if _candidate_passes_abs_threshold(candidate, threshold):
             return candidate
-    sign = -1.0 if rng.random() < 0.5 else 1.0
-    return float(sign * threshold)
+    raise ValueError("Rejection sampler exhausted: requested effect is outside the prior support")
 
 
 def _sample_abs_rejection_candidate(

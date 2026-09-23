@@ -92,32 +92,28 @@ def write_dataset_annotation_channels(
     labels_dir = dataset.root / "labels"
     labels_dir.mkdir(parents=True, exist_ok=True)
     selected_channels = _selected_annotation_channels(config)
-    frames_by_channel: dict[str, list[pd.DataFrame]] = {
-        name: [] for name in selected_channels
-    }
+    table_paths: dict[str, str] = {}
+    table_hashes: dict[str, str] = {}
+    row_counts = {name: 0 for name in selected_channels}
+    temp_paths = {name: labels_dir / f".{name}.csv.tmp" for name in selected_channels}
+    for path in temp_paths.values():
+        path.write_text("", encoding="utf-8")
     for instance in dataset.instances:
         events = load_json(instance.events_path)
         channels = build_annotation_channels(
-            length=instance.length,
-            channels=instance.channels,
-            events=events,
+            length=instance.length, channels=instance.channels, events=events,
         )
         for name in selected_channels:
             channel = channels[name]
-            frames_by_channel[name].append(
-                _flatten_label_table(instance, channel.values, channel.columns)
-            )
-
-    table_paths: dict[str, str] = {}
-    table_hashes: dict[str, str] = {}
-    row_counts: dict[str, int] = {}
-    for name in selected_channels:
-        frame = _concat_frames(frames_by_channel[name])
+            frame = _flatten_label_table(instance, channel.values, channel.columns)
+            frame.to_csv(temp_paths[name], mode="a", index=False,
+                         header=row_counts[name] == 0)
+            row_counts[name] += len(frame)
+    for name, temp in temp_paths.items():
         path = labels_dir / f"{name}.csv"
-        frame.to_csv(path, index=False)
+        temp.replace(path)
         table_paths[name] = _relative_path(path, dataset.root)
         table_hashes[name] = _file_hash(path)
-        row_counts[name] = int(len(frame))
 
     manifest = annotation_channel_manifest()
     manifest["channels"] = [
@@ -139,10 +135,10 @@ def write_dataset_annotation_channels(
         }
     )
     manifest_path = labels_dir / "annotation_channel_manifest.json"
-    write_json(manifest_path, manifest, sort_keys=True, indent=2)
     manifest["manifest_path"] = _relative_path(manifest_path, dataset.root)
-    manifest["manifest_hash"] = _file_hash(manifest_path)
     write_json(manifest_path, manifest, sort_keys=True, indent=2)
+    # Only the parent stores the final-byte hash: no self-referential hash.
+    manifest["manifest_hash"] = _file_hash(manifest_path)
     return manifest
 
 
@@ -280,7 +276,7 @@ def _law_replicate_record(
         "law_level_replicate_version": LAW_REPLICATE_VERSION,
         "replicate_id": f"law:{event_id}",
         "replicate_index": replicate_index,
-        "replicate_source": "generated_paired_event_window",
+        "replicate_source": "event_window_registry_not_independent_realizations",
         "output_split": config.output_split,
         "paired_seed_policy": config.paired_seed_policy,
         "event_id": event_id,
@@ -333,7 +329,7 @@ def _write_law_replicate_outputs(
         "enabled": True,
         "output_split": config.output_split,
         "paired_seed_policy": config.paired_seed_policy,
-        "replicate_source": "generated_paired_event_window",
+        "replicate_source": "event_window_registry_not_independent_realizations",
         "replicas_per_genotype_requested": config.requested_replicas,
         "replicate_registry_path": _relative_path(registry_path, dataset.root),
         "replicate_table_path": _relative_path(table_path, dataset.root),

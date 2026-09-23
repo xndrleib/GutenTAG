@@ -11,6 +11,7 @@ from ...base_oscillations import CylinderBellFunnel, RandomModeJump
 @dataclass
 class AnomalyVarianceParameters:
     variance: float = 0.0
+    noise_std_ratio: Optional[float] = None
     min_effect_delta: float = 0.0
     transition_length: Optional[int] = None
 
@@ -19,6 +20,7 @@ class AnomalyVariance(BaseAnomaly):
     def __init__(self, parameters: AnomalyVarianceParameters):
         super().__init__()
         self.variance = parameters.variance
+        self.noise_std_ratio = parameters.noise_std_ratio
         self.min_effect_delta = max(0.0, float(parameters.min_effect_delta))
         self.transition_length = parameters.transition_length
 
@@ -56,6 +58,16 @@ class AnomalyVariance(BaseAnomaly):
             base.noise[anomaly_protocol.start : anomaly_protocol.end],
             copy=True,
         )
+        if self.noise_std_ratio is not None:
+            ratio = float(self.noise_std_ratio)
+            if not np.isfinite(ratio) or ratio < 0:
+                raise ValueError("noise_std_ratio must be finite and nonnegative")
+            envelope = self.build_symmetric_envelope(length, self.transition_length)
+            # Reuse innovations: ratio=1 is a true null, not resampled noise.
+            base.noise[anomaly_protocol.start:anomaly_protocol.end] = (
+                original_noise * (1.0 + envelope * (ratio - 1.0))
+            )
+            return
         target_std = max(0.0, float(self.variance) * reference_scale)
         if target_std <= 0:
             candidate_noise = self._zero_target_noise(original_noise, length)
@@ -141,14 +153,10 @@ class AnomalyVariance(BaseAnomaly):
         base_kind: str,
     ) -> np.ndarray:
         envelope = self.build_symmetric_envelope(length, self.transition_length)
-        if base_kind in {"polynomial", "random-walk"}:
-            return original_noise + envelope * subsequence_noise
         return original_noise + envelope * (subsequence_noise - original_noise)
 
     def _effective_min_effect(self, base_kind: str, reference_scale: float) -> float:
         effective_min_effect = float(self.min_effect_delta)
-        if base_kind in {"polynomial", "random-walk"}:
-            effective_min_effect = max(effective_min_effect, 0.75 * reference_scale)
         return effective_min_effect
 
     @staticmethod

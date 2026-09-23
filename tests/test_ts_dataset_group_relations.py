@@ -249,7 +249,9 @@ class TestTSDatasetGenerationProfiles(
                     )
 
                     self.assertGreater(clean_corr, 0.5)
-                    self.assertLess(anomalous_corr, -0.5)
+                    # No hidden target amplification: require the requested direction,
+                    # not the obsolete hard-coded -0.92 target floor.
+                    self.assertLess(anomalous_corr, clean_corr - 0.3)
                     self.assertEqual(event["injection_level"], "observed_window")
 
     def test_new_multivariate_anomalies_emit_semantic_metadata(self) -> None:

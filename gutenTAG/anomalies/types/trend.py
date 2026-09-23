@@ -17,7 +17,7 @@ class AnomalyTrendParameters:
     # Importing BaseOscillationInterface here would create a circular import.
     trend: "BaseOscillationInterface"
     transition_length: Optional[int] = None
-    boundary_mode: str = "inside_window_zero_endpoints"
+    boundary_mode: str = "inside_window_preserve_shape"
     envelope_kind: str = "sine2"
     min_effect_delta: float = 0.0
 
@@ -137,8 +137,13 @@ class AnomalyTrend(BaseAnomaly):
         amplitude_bell: np.ndarray,
     ) -> np.ndarray:
         local = np.asarray(timeseries, dtype=np.float64).copy()
-        local = self._anchor_zero_endpoints(local)
-        if self.envelope_kind in ("sine2", "sin2") and local.shape[0] > 1:
+        if self.boundary_mode == "inside_window_zero_endpoints":
+            local = self._anchor_zero_endpoints(local)
+        elif self.boundary_mode == "inside_window_preserve_shape":
+            local -= local[0] if local.size else 0.0
+        else:
+            raise ValueError(f"Unknown trend boundary_mode: {self.boundary_mode}")
+        if self.boundary_mode == "inside_window_zero_endpoints" and self.envelope_kind in ("sine2", "sin2") and local.shape[0] > 1:
             phase = np.linspace(0.0, np.pi, local.shape[0], dtype=np.float64)
             local *= np.sin(phase) ** 2
         elif self.envelope_kind == "transition":

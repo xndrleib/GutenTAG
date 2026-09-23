@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -12,7 +13,6 @@ import numpy as np
 from ..generator.anomaly_objects import build_anomalies
 from ..generator.base_channels import apply_variations
 from ..generator.base_generation import (
-    generate_base_instance_series,
     prepare_base_instance,
 )
 from .config import TSGeneratorConfig
@@ -193,14 +193,9 @@ def _generate_anomalous_base_series(
     base_instance: Any,
     effective_base_channel_correlation: Mapping[str, Any],
 ) -> Any:
-    return generate_base_instance_series(
-        base_kind=variant.base_oscillation,
-        base_parameters_per_channel=base_instance.base_parameters_per_channel,
-        seed=int(seeds["base_seed"]),
-        shared_noise_seed=int(seeds["base_shared_noise_seed"]),
-        base_channel_correlation=effective_base_channel_correlation,
-        expected_length=config.length,
-    )
+    # Clone mutable arrays once, instead of repeating GP generation. Immutable
+    # process laws implement __deepcopy__ by returning themselves.
+    return copy.deepcopy(base_instance.series)
 
 
 def _write_paired_instance_artifacts(

@@ -481,8 +481,10 @@ def calibration_null_instances(
             for instance in instances
             if instance.split == protocol.calibration_split
         )
-        if preferred:
-            return preferred
+        if not preferred:
+            raise ValueError(f"Required calibration split {protocol.calibration_split!r} is absent")
+        return preferred
+    # None is the explicit legacy/oracle diagnostic mode, not a deployment protocol.
     return tuple(instances)
 
 

@@ -1,4 +1,8 @@
-"""Blind-scan scoring and row construction for corrected detectability."""
+"""Time-blind, channel-oracle and duration-oracle diagnostic scans.
+
+These legacy diagnostics receive event metadata. They are NOT fully blind
+benchmark measurements; use tsgen.capabilities.v13_evaluation for that task.
+"""
 
 from __future__ import annotations
 

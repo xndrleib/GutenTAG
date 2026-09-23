@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from ..anomalies.types import BaseAnomaly
+from .latent_laws import recouple_lmc_target
 from .group_context import resolve_group_context
 from .group_event_application import apply_group_channel_effect
 from .group_relation_policy import (
@@ -215,6 +216,15 @@ def _apply_covariance_rewrite(
     channel_bos: list[Any],
     runtime: Any,
 ) -> str:
+    lmc = recouple_lmc_target(
+        bo=channel_bos[state.channel], anchor=context.anchor_channel,
+        start=context.source_start, end=context.source_end,
+        target_correlation=state.effective_strength, transition=state.transition_length,
+    )
+    if lmc is not None:
+        runtime.replace_noise(bo=channel_bos[state.channel], start=context.source_start,
+                              end=context.source_end, target_noise=lmc)
+        return "noise"
     latent = latent_shared_noise_attrs(
         channel_bos[state.channel],
         context.source_start,

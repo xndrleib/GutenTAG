@@ -9,5 +9,6 @@ timeseries:
         channel: 0
         kinds:
           - kind: trend
+            boundary_mode: inside_window_zero_endpoints
             oscillation:
               kind: sine

@@ -20,11 +20,12 @@ class KernelSpec:
     length_scale: float = 1.0
     period: float = 1.0
     alpha: float = 1.0
+    periodic_smoothness: float = 1.0
 
     def __post_init__(self) -> None:
         if self.kind not in KERNELS:
             raise ValueError(f"Unknown kernel: {self.kind}")
-        for name in ("length_scale", "period", "alpha"):
+        for name in ("length_scale", "period", "alpha", "periodic_smoothness"):
             value = getattr(self, name)
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
@@ -41,7 +42,7 @@ class KernelSpec:
         if self.kind == "rq":
             return (1.0 + r * r / (2.0 * self.alpha)) ** (-self.alpha)
         periodic = np.exp(-2.0 * np.sin(np.pi * lag / self.period) ** 2
-                          / self.length_scale**2)
+                          / self.periodic_smoothness**2)
         return periodic if self.kind == "periodic" else periodic * np.exp(-0.5*r*r)
 
     def spectrum(self, rng: np.random.Generator, features: int) -> np.ndarray:
@@ -55,7 +56,7 @@ class KernelSpec:
         if self.kind == "rq":
             precision = rng.gamma(self.alpha, 1.0/self.alpha, size=features)
             return rng.normal(size=features) * np.sqrt(precision) / self.length_scale
-        k = 0.5 / self.length_scale**2
+        k = 0.5 / self.periodic_smoothness**2
         harmonics = rng.poisson(k, features) - rng.poisson(k, features)
         omega = (2.0 * np.pi / self.period) * harmonics
         if self.kind == "locally-periodic":

@@ -147,7 +147,7 @@ def _paired_fake_functions(
 
     return {
         "prepare_base_instance": fake_prepare_base_instance,
-        "generate_base_instance_series": fake_generate_base_instance_series,
+        "_generate_anomalous_base_series": fake_generate_base_instance_series,
         "plan_instance_segments": fake_plan_instance_segments,
         "resolve_runtime_anomaly_parameters_for_segments": (
             fake_resolve_runtime_anomaly_parameters_for_segments
@@ -204,7 +204,7 @@ def _paired_seeds() -> dict[str, int]:
 def _assert_generation_inputs(calls: dict[str, object]) -> None:
     assert calls["prepare"]["base_kind"] == "sine"
     assert calls["prepare"]["base_channel_correlation"] == {"shared_noise_weight": 0.0}
-    assert calls["base_series"]["base_kind"] == "sine"
+    assert calls["base_series"]["variant"].base_oscillation == "sine"
     assert calls["plan"]["anomaly_type"] == "mean"
     assert calls["plan"]["variant_segment_planner"] == {"strategy": "uniform"}
 

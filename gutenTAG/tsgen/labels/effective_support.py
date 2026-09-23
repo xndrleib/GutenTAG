@@ -53,7 +53,7 @@ def resolve_label_bounds_from_effect(
         epsilon = float(support_eps_value)
     active = np.flatnonzero(delta > epsilon)
     if active.size == 0:
-        return int(protocol_start), int(protocol_end)
+        return int(protocol_start), int(protocol_start)
     start = int(protocol_start + active[0])
     end = int(protocol_start + active[-1] + 1)
     if anomaly_type != "extremum":
@@ -147,6 +147,8 @@ def normalize_subsequence_length(
     ValueError
         If the selected policy cannot produce the requested length.
     """
+    if policy not in {"none", "crop", "pad", "resample"}:
+        raise ValueError(f"Unknown length normalization policy: {policy}")
     if expected_length <= 0:
         return np.array([], dtype=np.float64)
     if subsequence.shape[0] == expected_length:

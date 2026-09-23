@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 
 from .array_store import ArrayStore
+from .grouped_statistics import paired_c2st, cluster_energy_interval
+from scipy.spatial.distance import cdist, pdist
 from .cache import CacheStore
 from .dataset import DatasetIndex, EventGroup, InstanceRecord, read_timeseries_csv
 from .numerics import finite_float
@@ -54,6 +56,7 @@ def compute_law_observability_profiles(
     fingerprint_extra: dict[str, object] = {
         "bootstrap_samples": int(protocol.bootstrap_samples),
         "partition_size": int(partition_size),
+        "law_feature_version": "signed_relations_cluster_v2",
     }
 
     def worker(
@@ -95,6 +98,7 @@ def _law_observability_for_keys(
     for key in keys:
         instances = grouped.get(key, [])
         variant_id, split, anomaly_type, constraint_tag, semantic_scope = key
+        group_ids: list[str] = []
         clean_features: list[np.ndarray] = []
         anomalous_features: list[np.ndarray] = []
         for instance in instances:
@@ -109,6 +113,7 @@ def _law_observability_for_keys(
                 else read_timeseries_csv(instance.anomalous_path)
             )
             for group in instance.event_groups:
+                group_ids.append(f"{instance.variant_id}/{instance.split}/{instance.instance_id}")
                 channels = _event_channels(group, instance.channels)
                 clean_features.append(
                     _window_features(clean, group.start, group.end, channels)
@@ -129,6 +134,7 @@ def _law_observability_for_keys(
                 clean=clean_matrix,
                 anomalous=anomalous_matrix,
                 bootstrap_samples=protocol.bootstrap_samples,
+                groups=np.asarray(group_ids),
                 rng=_rng_for_key(protocol.random_seed, key),
             )
         )
@@ -174,15 +180,19 @@ def _profile_row(
     anomalous: np.ndarray,
     bootstrap_samples: int,
     rng: np.random.Generator,
+    groups: np.ndarray | None = None,
 ) -> dict[str, object]:
+    raw_clean, raw_anomalous = clean, anomalous
+    clean, anomalous = _standardize_pair(clean, anomalous)
     energy = _energy_distance(clean, anomalous)
     mmd = _mmd_rbf(clean, anomalous)
-    c2st = _nearest_centroid_balanced_accuracy(clean, anomalous)
+    c2st = paired_c2st(raw_clean, raw_anomalous, groups)
     gaussian = _gaussian_proxies(clean, anomalous)
     ci_low, ci_high = _bootstrap_ci(
         clean,
         anomalous,
         samples=int(bootstrap_samples),
+        groups=groups,
         rng=rng,
     )
     status = _law_status(energy, c2st, clean.shape[0], anomalous.shape[0])
@@ -192,7 +202,9 @@ def _profile_row(
         "anomaly_type": anomaly_type,
         "constraint_tag": constraint_tag,
         "semantic_scope": semantic_scope,
-        "feature_space": "event_window_summary",
+        "feature_space": "signed_relations_event_summary_v2",
+        "independent_group_count": int(len(np.unique(groups))) if groups is not None else len(clean),
+        "uncertainty_unit": "paired_instance_cluster",
         "clean_sample_count": int(clean.shape[0]),
         "anomalous_sample_count": int(anomalous.shape[0]),
         "feature_dim": int(clean.shape[1]) if clean.ndim == 2 else 0,
@@ -226,13 +238,16 @@ def _window_features(
     matrix = np.atleast_2d(segment)
     flat = matrix.reshape(-1)
     diffs = np.diff(matrix, axis=0) if matrix.shape[0] >= 2 else np.zeros_like(matrix)
+    signed_pairs = np.zeros(matrix.shape[1]*(matrix.shape[1]-1)//2)
     corr_proxy = 0.0
     if matrix.shape[1] >= 2 and matrix.shape[0] >= 3:
         corr = np.asarray(np.corrcoef(matrix, rowvar=False), dtype=np.float64)
         mask = ~np.eye(corr.shape[0], dtype=bool)
-        corr_proxy = float(np.nanmean(np.abs(corr[mask])))
+        signed_pairs = np.nan_to_num(corr[np.triu_indices(corr.shape[0], 1)])
+        corr_proxy = float(np.nanmean(corr[mask]))
         if not math.isfinite(corr_proxy):
-            corr_proxy = 0.0
+            signed_pairs = np.zeros(matrix.shape[1]*(matrix.shape[1]-1)//2)
+    corr_proxy = 0.0
     features = np.asarray(
         [
             float(np.mean(flat)),
@@ -246,6 +261,7 @@ def _window_features(
         ],
         dtype=np.float64,
     )
+    features = np.r_[features, signed_pairs]
     features[~np.isfinite(features)] = 0.0
     return features
 
@@ -262,7 +278,7 @@ def _align_features(
     )
     clean = np.vstack([_pad(item, width) for item in clean_features])
     anomalous = np.vstack([_pad(item, width) for item in anomalous_features])
-    return _standardize_pair(clean, anomalous)
+    return clean, anomalous
 
 
 def _standardize_pair(
@@ -300,59 +316,45 @@ def _energy_distance(clean: np.ndarray, anomalous: np.ndarray) -> float:
 
 
 def _mean_pairwise_distance(left: np.ndarray, right: np.ndarray) -> float:
-    diff = left[:, None, :] - right[None, :, :]
-    return float(np.mean(np.sqrt(np.sum(np.square(diff), axis=2))))
+    total = 0.0
+    for i in range(0, len(left), 256):
+        for j in range(0, len(right), 256):
+            total += float(cdist(left[i:i+256], right[j:j+256]).sum())
+    return total / (len(left)*len(right))
 
 
 def _mmd_rbf(clean: np.ndarray, anomalous: np.ndarray) -> float:
     if clean.size == 0 or anomalous.size == 0:
         return math.nan
     gamma = _median_gamma(np.vstack([clean, anomalous]))
-    k_xx = _rbf_kernel(clean, clean, gamma)
-    k_yy = _rbf_kernel(anomalous, anomalous, gamma)
-    k_xy = _rbf_kernel(clean, anomalous, gamma)
-    return float(max(0.0, np.mean(k_xx) + np.mean(k_yy) - 2.0 * np.mean(k_xy)))
+    def mean_kernel(left, right):
+        total = 0.0
+        for i in range(0, len(left), 256):
+            for j in range(0, len(right), 256):
+                total += float(_rbf_kernel(left[i:i+256], right[j:j+256], gamma).sum())
+        return total / (len(left)*len(right))
+    return float(max(0.0, mean_kernel(clean, clean) + mean_kernel(anomalous, anomalous)
+                     - 2*mean_kernel(clean, anomalous)))
 
 
 def _median_gamma(values: np.ndarray) -> float:
     if values.shape[0] < 2:
         return 1.0
-    distances = []
-    for i in range(values.shape[0]):
-        for j in range(i + 1, values.shape[0]):
-            distances.append(float(np.sum(np.square(values[i] - values[j]))))
-    median = float(np.median(distances)) if distances else 1.0
+    subset = values[np.linspace(0, len(values)-1, min(len(values), 1024), dtype=int)]
+    distances = pdist(subset, metric="sqeuclidean")
+    median = float(np.median(distances)) if distances.size else 1.0
     return 1.0 / max(median, 1e-8)
 
 
 def _rbf_kernel(left: np.ndarray, right: np.ndarray, gamma: float) -> np.ndarray:
-    diff = left[:, None, :] - right[None, :, :]
-    sqdist = np.sum(np.square(diff), axis=2)
+    sqdist = cdist(left, right, metric="sqeuclidean")
     return np.exp(-float(gamma) * sqdist)
 
 
 def _nearest_centroid_balanced_accuracy(
     clean: np.ndarray, anomalous: np.ndarray
 ) -> float:
-    if clean.shape[0] < 2 or anomalous.shape[0] < 2:
-        return math.nan
-    clean_correct = 0
-    for index in range(clean.shape[0]):
-        clean_centroid = np.mean(np.delete(clean, index, axis=0), axis=0)
-        anomalous_centroid = np.mean(anomalous, axis=0)
-        clean_correct += int(
-            _nearest_label(clean[index], clean_centroid, anomalous_centroid) == 0
-        )
-    anomalous_correct = 0
-    for index in range(anomalous.shape[0]):
-        clean_centroid = np.mean(clean, axis=0)
-        anomalous_centroid = np.mean(np.delete(anomalous, index, axis=0), axis=0)
-        anomalous_correct += int(
-            _nearest_label(anomalous[index], clean_centroid, anomalous_centroid) == 1
-        )
-    sensitivity = anomalous_correct / max(float(anomalous.shape[0]), 1.0)
-    specificity = clean_correct / max(float(clean.shape[0]), 1.0)
-    return float(0.5 * (sensitivity + specificity))
+    return paired_c2st(clean, anomalous)
 
 
 def _nearest_label(
@@ -400,25 +402,11 @@ def _gaussian_kl(
 
 
 def _bootstrap_ci(
-    clean: np.ndarray,
-    anomalous: np.ndarray,
-    *,
-    samples: int,
-    rng: np.random.Generator,
+    clean: np.ndarray, anomalous: np.ndarray, *, samples: int,
+    rng: np.random.Generator, groups: np.ndarray | None = None,
 ) -> tuple[float, float]:
-    if samples <= 0 or clean.shape[0] < 2 or anomalous.shape[0] < 2:
-        return math.nan, math.nan
-    draws = []
-    count = min(int(samples), 200)
-    for _ in range(count):
-        clean_idx = rng.integers(0, clean.shape[0], size=clean.shape[0])
-        anomalous_idx = rng.integers(0, anomalous.shape[0], size=anomalous.shape[0])
-        draws.append(_energy_distance(clean[clean_idx], anomalous[anomalous_idx]))
-    values = np.asarray(draws, dtype=np.float64)
-    values = values[np.isfinite(values)]
-    if values.size == 0:
-        return math.nan, math.nan
-    return float(np.quantile(values, 0.025)), float(np.quantile(values, 0.975))
+    group = np.arange(len(clean)) if groups is None else groups
+    return cluster_energy_interval(clean, anomalous, group, samples=samples, rng=rng)
 
 
 def _law_status(
