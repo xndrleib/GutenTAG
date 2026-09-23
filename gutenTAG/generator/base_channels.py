@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from .multivariate_ops import compose_observed_window, replace_observed_window
+from .latent_laws import apply_lmc_noise_correlation
 
 
 def shared_noise_weight(base_channel_correlation: Mapping[str, Any]) -> float:
@@ -48,6 +49,12 @@ def apply_shared_noise_correlation(
     ValueError
         If non-empty channel noises have incompatible lengths.
     """
+    if apply_lmc_noise_correlation(
+        channel_bos=channel_bos,
+        seed=seed,
+        config=base_channel_correlation,
+    ):
+        return
     shared_weight = shared_noise_weight(base_channel_correlation)
     if shared_weight <= 0.0 or len(channel_bos) <= 1:
         return
