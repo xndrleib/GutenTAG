@@ -144,6 +144,14 @@ def derive_instance_seeds(
     instance_label = f"instance_{instance_index:03d}"
     instance_seed = derive_seed(master_seed, variant_id, split, instance_label)
     split_stable_instance_seed = derive_seed(master_seed, variant_id, instance_label)
+    if split_parameter_policy == "matched":
+        parameter_seed_root = split_stable_instance_seed
+    elif split_parameter_policy == "independent":
+        parameter_seed_root = instance_seed
+    else:
+        raise ValueError(
+            "split_parameter_policy must be one of {'matched','independent'}"
+        )
     return {
         "instance_seed": instance_seed,
         "split_stable_instance_seed": split_stable_instance_seed,
