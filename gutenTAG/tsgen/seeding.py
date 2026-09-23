@@ -158,10 +158,10 @@ def derive_instance_seeds(
         "base_seed": derive_seed(instance_seed, "base"),
         "base_shared_noise_seed": derive_seed(instance_seed, "base-shared-noise"),
         "base_params_seed": derive_seed(
-            split_stable_instance_seed, "base-parameter-sampling"
+            parameter_seed_root, "base-parameter-sampling"
         ),
         "base_channel_params_seed": derive_seed(
-            split_stable_instance_seed, "base-channel-parameter-sampling"
+            parameter_seed_root, "base-channel-parameter-sampling"
         ),
         "plan_seed": derive_seed(instance_seed, "segment-plan"),
         "anomaly_seed": derive_seed(instance_seed, "anomaly-transform"),
