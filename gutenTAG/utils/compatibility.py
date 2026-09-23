@@ -65,6 +65,29 @@ class Compatibility:
         ),
         dtype=bool,
     )
+    # v13 stochastic carriers are opt-in experimental carriers. They are
+    # mechanically compatible with local operators and selected relation
+    # operators, but are not added to validated admission until capability
+    # evidence is available.
+    hard_combinations["gp-mixture"] = pd.Series(
+        {
+            ANOMALY_TYPE_NAMES.AMPLITUDE: True,
+            ANOMALY_TYPE_NAMES.CORRELATION_FLIP: True,
+            ANOMALY_TYPE_NAMES.COVARIANCE_CHANGE: True,
+            ANOMALY_TYPE_NAMES.CHANNEL_REWIRING: True,
+            ANOMALY_TYPE_NAMES.EXTREMUM: True,
+            ANOMALY_TYPE_NAMES.FREQUENCY: False,
+            ANOMALY_TYPE_NAMES.LAG_SYNCHRONIZATION: True,
+            ANOMALY_TYPE_NAMES.MEAN: True,
+            ANOMALY_TYPE_NAMES.PATTERN: False,
+            ANOMALY_TYPE_NAMES.PATTERN_SHIFT: False,
+            ANOMALY_TYPE_NAMES.PLATFORM: True,
+            ANOMALY_TYPE_NAMES.SHARED_FACTOR_BREAK: True,
+            ANOMALY_TYPE_NAMES.TREND: True,
+            ANOMALY_TYPE_NAMES.VARIANCE: True,
+            ANOMALY_TYPE_NAMES.MODE_CORRELATION: False,
+        }
+    )
     recommended_combinations = hard_combinations.copy()
     _recommended_path = Path(__file__).with_name("recommended_compatibility.json")
     validated_combinations = hard_combinations.copy()
