@@ -420,6 +420,7 @@ class TSDatasetGenerator:
             variant_id=variant.variant_id,
             split=split,
             instance_index=instance_spec.seed_index,
+            split_parameter_policy=self.config.split_parameter_policy,
         )
         if instance_spec.role == "clean_only":
             summary = self._generate_clean_split_instance(
